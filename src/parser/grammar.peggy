@@ -11,10 +11,16 @@ OrExpression
     }
 
 AndExpression
-  = head:PrimaryExpression tail:(_ "AND" _ e:PrimaryExpression { return e })*
+  = head:PrimaryExpression tail:(Connector e:PrimaryExpression { return e })*
     {
       return tail.length === 0 ? head : { type: 'and', children: [head, ...tail] }
     }
+
+// AND is the default combinator between predicates, so it may be stated explicitly
+// ("A AND B") or left implicit via juxtaposition ("A B") — either way requires whitespace.
+Connector
+  = _ "AND" _
+  / [\t\n\r ]+
 
 PrimaryExpression
   = "(" _ e:Expression _ ")" { return e }
@@ -44,7 +50,17 @@ Operator "operator"
   / "<" { return '<' }
 
 Value "value"
-  = chars:$([^\t\n\r ()]+) { return chars }
+  = QuotedValue
+  / chars:$([^\t\n\r ()]+) { return chars }
+
+// Double-quoted values may contain whitespace and parentheses. "\" escapes the
+// following character (e.g. \" for a literal quote, \\ for a literal backslash).
+QuotedValue "quoted value"
+  = '"' chars:QuotedChar* '"' { return chars.join('') }
+
+QuotedChar
+  = "\\" char:. { return char }
+  / !'"' char:. { return char }
 
 _ "whitespace"
   = [\t\n\r ]*

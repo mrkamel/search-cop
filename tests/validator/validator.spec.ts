@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { parse } from '../src/parser/parser.js';
-import { validate } from '../src/validator/validator.js';
-import { SearchCopError } from '../src/errors/errors.js';
-import type { AttributeMap } from '../src/attributes/types.js';
+import { parse } from '../../src/parser/parser.js';
+import { validate } from '../../src/validator/validator.js';
+import { SearchCopError } from '../../src/errors/errors.js';
+import { tryCatch } from '../../src/utils/tryCatch.js';
+import type { AttributeMap } from '../../src/attributes/types.js';
 
 const attributes: AttributeMap = {
   status: { type: 'enum', values: ['online', 'offline', 'pending'] },
@@ -19,22 +20,17 @@ function validateQuery(query: string) {
 
 describe('validate: attribute checks', () => {
   it('rejects unknown attributes', () => {
-    expect(() => validateQuery('unknown:foo')).toThrow(SearchCopError);
+    const [error] = tryCatch(() => validateQuery('unknown:foo'));
 
-    try {
-      validateQuery('unknown:foo');
-    } catch (error) {
-      expect((error as SearchCopError).code).toBe('UNKNOWN_ATTRIBUTE');
-    }
+    expect(error).toBeInstanceOf(SearchCopError);
+    expect((error as SearchCopError).code).toBe('UNKNOWN_ATTRIBUTE');
   });
 
   it('rejects unsupported operators for enum attributes', () => {
-    try {
-      validateQuery('status:>online');
-      expect.fail('expected validate to throw');
-    } catch (error) {
-      expect((error as SearchCopError).code).toBe('INVALID_OPERATOR');
-    }
+    const [error] = tryCatch(() => validateQuery('status:>online'));
+
+    expect(error).toBeInstanceOf(SearchCopError);
+    expect((error as SearchCopError).code).toBe('INVALID_OPERATOR');
   });
 });
 
@@ -50,12 +46,10 @@ describe('validate: value conversion', () => {
   });
 
   it('rejects invalid numbers', () => {
-    try {
-      validateQuery('price:>abc');
-      expect.fail('expected validate to throw');
-    } catch (error) {
-      expect((error as SearchCopError).code).toBe('INVALID_VALUE');
-    }
+    const [error] = tryCatch(() => validateQuery('price:>abc'));
+
+    expect(error).toBeInstanceOf(SearchCopError);
+    expect((error as SearchCopError).code).toBe('INVALID_VALUE');
   });
 
   it('converts booleans', () => {
@@ -64,21 +58,17 @@ describe('validate: value conversion', () => {
   });
 
   it('rejects invalid booleans', () => {
-    try {
-      validateQuery('active:yes');
-      expect.fail('expected validate to throw');
-    } catch (error) {
-      expect((error as SearchCopError).code).toBe('INVALID_VALUE');
-    }
+    const [error] = tryCatch(() => validateQuery('active:yes'));
+
+    expect(error).toBeInstanceOf(SearchCopError);
+    expect((error as SearchCopError).code).toBe('INVALID_VALUE');
   });
 
   it('validates enum values', () => {
-    try {
-      validateQuery('status:invalid');
-      expect.fail('expected validate to throw');
-    } catch (error) {
-      expect((error as SearchCopError).code).toBe('INVALID_ENUM_VALUE');
-    }
+    const [error] = tryCatch(() => validateQuery('status:invalid'));
+
+    expect(error).toBeInstanceOf(SearchCopError);
+    expect((error as SearchCopError).code).toBe('INVALID_ENUM_VALUE');
   });
 
   it('converts date-only values to a UTC midnight Date', () => {
@@ -88,21 +78,17 @@ describe('validate: value conversion', () => {
   });
 
   it('rejects invalid dates', () => {
-    try {
-      validateQuery('releaseDate:>abc');
-      expect.fail('expected validate to throw');
-    } catch (error) {
-      expect((error as SearchCopError).code).toBe('INVALID_VALUE');
-    }
+    const [error] = tryCatch(() => validateQuery('releaseDate:>abc'));
+
+    expect(error).toBeInstanceOf(SearchCopError);
+    expect((error as SearchCopError).code).toBe('INVALID_VALUE');
   });
 
   it('rejects calendar-invalid dates', () => {
-    try {
-      validateQuery('releaseDate:2026-02-30');
-      expect.fail('expected validate to throw');
-    } catch (error) {
-      expect((error as SearchCopError).code).toBe('INVALID_VALUE');
-    }
+    const [error] = tryCatch(() => validateQuery('releaseDate:2026-02-30'));
+
+    expect(error).toBeInstanceOf(SearchCopError);
+    expect((error as SearchCopError).code).toBe('INVALID_VALUE');
   });
 
   it('converts datetime values with an explicit UTC offset', () => {
@@ -126,12 +112,10 @@ describe('validate: value conversion', () => {
 
 describe('validate: nested boolean expressions', () => {
   it('validates every predicate in a nested expression', () => {
-    try {
-      validateQuery('status:online AND (price:>100 OR unknown:foo)');
-      expect.fail('expected validate to throw');
-    } catch (error) {
-      expect((error as SearchCopError).code).toBe('UNKNOWN_ATTRIBUTE');
-    }
+    const [error] = tryCatch(() => validateQuery('status:online AND (price:>100 OR unknown:foo)'));
+
+    expect(error).toBeInstanceOf(SearchCopError);
+    expect((error as SearchCopError).code).toBe('UNKNOWN_ATTRIBUTE');
   });
 
   it('preserves AND/OR structure through validation', () => {

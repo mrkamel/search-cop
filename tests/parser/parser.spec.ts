@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { parse } from '../src/parser/parser.js';
-import { SearchCopError } from '../src/errors/errors.js';
-import type { PredicateExpression } from '../src/ast/types.js';
+import { parse } from '../../src/parser/parser.js';
+import { SearchCopError } from '../../src/errors/errors.js';
+import { tryCatch } from '../../src/utils/tryCatch.js';
+import type { PredicateExpression } from '../../src/ast/types.js';
 
 function predicate(field: string, operator: string, value: string): PredicateExpression {
   return { type: 'predicate', field, operator: operator as PredicateExpression['operator'], value };
@@ -45,11 +46,76 @@ describe('parse: operators', () => {
   });
 });
 
+describe('parse: quoted values', () => {
+  it('parses a quoted value containing whitespace', () => {
+    expect(stripPosition(parse('first_name:"foo bar"'))).toEqual(predicate('first_name', '=', 'foo bar'));
+  });
+
+  it('parses a quoted value containing parentheses', () => {
+    expect(stripPosition(parse('name:"(foo)"'))).toEqual(predicate('name', '=', '(foo)'));
+  });
+
+  it('parses an empty quoted value', () => {
+    expect(stripPosition(parse('name:""'))).toEqual(predicate('name', '=', ''));
+  });
+
+  it('unescapes \\" to a literal quote', () => {
+    expect(stripPosition(parse('name:"foo \\"bar\\" baz"'))).toEqual(predicate('name', '=', 'foo "bar" baz'));
+  });
+
+  it('unescapes \\\\ to a literal backslash', () => {
+    expect(stripPosition(parse('name:"back\\\\slash"'))).toEqual(predicate('name', '=', 'back\\slash'));
+  });
+
+  it('combines quoted predicates with AND/OR, including implicit AND', () => {
+    expect(stripPosition(parse('is_active:false OR first_name:"foo bar"'))).toEqual({
+      type: 'or',
+      children: [predicate('is_active', '=', 'false'), predicate('first_name', '=', 'foo bar')],
+    });
+
+    expect(stripPosition(parse('first_name:"foo bar" status:online'))).toEqual({
+      type: 'and',
+      children: [predicate('first_name', '=', 'foo bar'), predicate('status', '=', 'online')],
+    });
+  });
+
+  it('falls back to an unquoted value when the closing quote is missing', () => {
+    expect(stripPosition(parse('name:"unterminated'))).toEqual(predicate('name', '=', '"unterminated'));
+  });
+});
+
 describe('parse: boolean expressions', () => {
   it('parses AND', () => {
     expect(stripPosition(parse('status:online AND price:>100'))).toEqual({
       type: 'and',
       children: [predicate('status', '=', 'online'), predicate('price', '>', '100')],
+    });
+  });
+
+  it('treats juxtaposition (no explicit operator) as implicit AND', () => {
+    expect(stripPosition(parse('status:online price:>100'))).toEqual({
+      type: 'and',
+      children: [predicate('status', '=', 'online'), predicate('price', '>', '100')],
+    });
+  });
+
+  it('mixes implicit and explicit AND', () => {
+    expect(stripPosition(parse('status:a status:b AND status:c'))).toEqual({
+      type: 'and',
+      children: [predicate('status', '=', 'a'), predicate('status', '=', 'b'), predicate('status', '=', 'c')],
+    });
+  });
+
+  it('gives implicit AND the same precedence as explicit AND: "A B OR C" = "(A AND B) OR C"', () => {
+    expect(stripPosition(parse('status:a status:b OR status:c'))).toEqual({
+      type: 'or',
+      children: [
+        {
+          type: 'and',
+          children: [predicate('status', '=', 'a'), predicate('status', '=', 'b')],
+        },
+        predicate('status', '=', 'c'),
+      ],
     });
   });
 
@@ -106,19 +172,12 @@ describe('parse: boolean expressions', () => {
 });
 
 describe('parse: syntax errors', () => {
-  it('rejects implicit AND (no operator between predicates)', () => {
-    expect(() => parse('status:online price:>100')).toThrow(SearchCopError);
-  });
-
   it('throws a SearchCopError with code INVALID_SYNTAX and a position', () => {
-    try {
-      parse('status:online AND');
-      expect.fail('expected parse to throw');
-    } catch (error) {
-      expect(error).toBeInstanceOf(SearchCopError);
-      expect((error as SearchCopError).code).toBe('INVALID_SYNTAX');
-      expect((error as SearchCopError).position).toBeGreaterThan(0);
-    }
+    const [error] = tryCatch(() => parse('status:online AND'));
+
+    expect(error).toBeInstanceOf(SearchCopError);
+    expect((error as SearchCopError).code).toBe('INVALID_SYNTAX');
+    expect((error as SearchCopError).position).toBeGreaterThan(0);
   });
 
   it('rejects unbalanced parentheses', () => {

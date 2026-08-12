@@ -59,8 +59,23 @@ status:a OR status:b AND status:c        // == status:a OR (status:b AND status:
 (status:online OR status:pending) AND price:>100
 ```
 
-Implicit `AND` (juxtaposition without an operator) is not supported — `status:online price:>100`
-is rejected.
+`AND` is the default combinator and may be omitted — juxtaposing predicates with whitespace
+implies `AND`:
+
+```text
+status:online price:>100                 // == status:online AND price:>100
+```
+
+### Quoted values
+
+Unquoted values end at the first whitespace or parenthesis, so a value containing either
+must be double-quoted. Inside quotes, `\"` and `\\` are unescaped to `"` and `\`:
+
+```text
+name:"foo bar"
+name:"(foo)"
+name:"foo \"bar\" baz"                   // foo "bar" baz
+```
 
 ### Booleans
 

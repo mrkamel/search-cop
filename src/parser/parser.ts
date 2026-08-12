@@ -1,11 +1,12 @@
 import { parse as parseGrammar, SyntaxError as GrammarSyntaxError } from './grammar.js';
 import type { Expression } from '../ast/types.js';
 import { SearchCopError } from '../errors/errors.js';
+import { tryCatch } from '../utils/tryCatch.js';
 
 export function parse(query: string): Expression {
-  try {
-    return parseGrammar(query) as Expression;
-  } catch (error) {
+  const [error, expression] = tryCatch(() => parseGrammar(query) as Expression);
+
+  if (error) {
     if (error instanceof GrammarSyntaxError) {
       const position = error.location.start.offset + 1;
 
@@ -14,4 +15,6 @@ export function parse(query: string): Expression {
 
     throw error;
   }
+
+  return expression;
 }

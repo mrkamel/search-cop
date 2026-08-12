@@ -1,11 +1,11 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { DataSource, Repository } from 'typeorm';
-import { parse } from '../src/parser/parser.js';
-import { validate } from '../src/validator/validator.js';
-import { compile } from '../src/compiler/typeorm.js';
-import { createTestDataSource } from './support/data-source.js';
-import { Product } from './support/product.entity.js';
-import type { AttributeMap } from '../src/attributes/types.js';
+import { parse } from '../../src/parser/parser.js';
+import { validate } from '../../src/validator/validator.js';
+import { compile } from '../../src/compiler/typeorm.js';
+import { createTestDataSource } from '../support/data-source.js';
+import { Product } from '../support/product.entity.js';
+import type { AttributeMap } from '../../src/attributes/types.js';
 
 const attributes: AttributeMap = {
   status: { type: 'enum', values: ['online', 'offline', 'pending'] },
