@@ -1,0 +1,24 @@
+import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
+
+export type ProductStatus = 'online' | 'offline' | 'pending';
+
+@Entity()
+export class Product {
+  @PrimaryGeneratedColumn()
+  id!: number;
+
+  @Column('varchar')
+  name!: string;
+
+  @Column('varchar')
+  status!: ProductStatus;
+
+  @Column('float')
+  price!: number;
+
+  @Column({ type: 'boolean', default: true })
+  active!: boolean;
+
+  @Column({ type: 'datetime' })
+  createdAt!: Date;
+}

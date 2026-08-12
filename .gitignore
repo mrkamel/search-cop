@@ -1,0 +1,5 @@
+node_modules/
+dist/
+coverage/
+src/parser/grammar.js
+src/parser/grammar.js.map

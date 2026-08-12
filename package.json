@@ -1,0 +1,43 @@
+{
+  "name": "search-cop",
+  "version": "0.1.0",
+  "description": "A small search DSL that compiles to TypeORM SelectQueryBuilder queries",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "pnpm run build:grammar && tsc -p tsconfig.build.json && cp src/parser/grammar.js dist/parser/grammar.js",
+    "build:grammar": "peggy --format es -o src/parser/grammar.js src/parser/grammar.peggy",
+    "dev": "pnpm run build:grammar && tsc -p tsconfig.build.json --watch",
+    "test": "pnpm run build:grammar && vitest run",
+    "test:watch": "pnpm run build:grammar && vitest",
+    "lint": "eslint .",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "peerDependencies": {
+    "typeorm": ">=0.3.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.9.0",
+    "@types/better-sqlite3": "^7.6.11",
+    "@types/node": "^22.5.0",
+    "better-sqlite3": "^11.3.0",
+    "eslint": "^9.9.0",
+    "peggy": "^4.0.3",
+    "reflect-metadata": "^0.2.2",
+    "typeorm": "^0.3.20",
+    "typescript": "^5.5.4",
+    "typescript-eslint": "^8.3.0",
+    "vitest": "^2.0.5"
+  },
+  "packageManager": "pnpm@9.7.0"
+}
