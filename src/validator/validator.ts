@@ -1,3 +1,4 @@
+import { validate as isUuid } from 'uuid';
 import type { Expression, Operator, PredicateExpression } from '../ast/types.js';
 import type { AttributeDefinition, AttributeMap } from '../attributes/types.js';
 import type { ValidatedExpression, ValidatedPredicate, ValidatedValue } from './types.js';
@@ -10,6 +11,7 @@ const OPERATORS_BY_TYPE: Record<AttributeDefinition['type'], Operator[]> = {
   date: ['=', '!=', '>', '>=', '<', '<='],
   datetime: ['=', '!=', '>', '>=', '<', '<='],
   enum: ['=', '!='],
+  uuid: ['=', '!='],
 };
 
 /**
@@ -77,6 +79,9 @@ function convertValue(predicate: PredicateExpression, attribute: AttributeDefini
 
     case 'enum':
       return convertEnum(predicate, attribute.values);
+
+    case 'uuid':
+      return convertUuid(predicate);
   }
 }
 
@@ -118,6 +123,18 @@ function convertEnum(predicate: PredicateExpression, values: string[]): string {
   }
 
   return predicate.value;
+}
+
+function convertUuid(predicate: PredicateExpression): string {
+  if (!isUuid(predicate.value)) {
+    throw new SearchCopError(
+      'INVALID_VALUE',
+      `Invalid UUID "${predicate.value}" for attribute "${predicate.field}".`,
+      predicate.position,
+    );
+  }
+
+  return predicate.value.toLowerCase();
 }
 
 function convertDate(predicate: PredicateExpression, allowTime: boolean): Date {

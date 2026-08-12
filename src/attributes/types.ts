@@ -1,4 +1,4 @@
-export type AttributeType = 'string' | 'number' | 'boolean' | 'date' | 'datetime' | 'enum';
+export type AttributeType = 'string' | 'number' | 'boolean' | 'date' | 'datetime' | 'enum' | 'uuid';
 
 interface BaseAttributeDefinition {
   type: AttributeType;
@@ -6,6 +6,10 @@ interface BaseAttributeDefinition {
 
 export interface StringAttributeDefinition extends BaseAttributeDefinition {
   type: 'string';
+}
+
+export interface UuidAttributeDefinition extends BaseAttributeDefinition {
+  type: 'uuid';
 }
 
 export interface NumberAttributeDefinition extends BaseAttributeDefinition {
@@ -35,7 +39,8 @@ export type AttributeDefinition =
   | BooleanAttributeDefinition
   | DateAttributeDefinition
   | DatetimeAttributeDefinition
-  | EnumAttributeDefinition;
+  | EnumAttributeDefinition
+  | UuidAttributeDefinition;
 
 export type AttributeMap = Record<string, AttributeDefinition>;
 
@@ -43,6 +48,7 @@ export type AttributeMap = Record<string, AttributeDefinition>;
 export type AttributeValue<T extends AttributeDefinition> = T extends
   | StringAttributeDefinition
   | EnumAttributeDefinition
+  | UuidAttributeDefinition
   ? string
   : T extends NumberAttributeDefinition
     ? number

@@ -12,6 +12,7 @@ const attributes: AttributeMap = {
   name: { type: 'string' },
   createdAt: { type: 'datetime' },
   releaseDate: { type: 'date' },
+  id: { type: 'uuid' },
 };
 
 function validateQuery(query: string) {
@@ -28,6 +29,13 @@ describe('validate: attribute checks', () => {
 
   it('rejects unsupported operators for enum attributes', () => {
     const [error] = tryCatch(() => validateQuery('status:>online'));
+
+    expect(error).toBeInstanceOf(SearchCopError);
+    expect((error as SearchCopError).code).toBe('INVALID_OPERATOR');
+  });
+
+  it('rejects unsupported operators for uuid attributes', () => {
+    const [error] = tryCatch(() => validateQuery('id:>550e8400-e29b-41d4-a716-446655440000'));
 
     expect(error).toBeInstanceOf(SearchCopError);
     expect((error as SearchCopError).code).toBe('INVALID_OPERATOR');
@@ -107,6 +115,51 @@ describe('validate: value conversion', () => {
     const result = validateQuery('createdAt:>=2026-01-01');
 
     expect(result).toMatchObject({ value: new Date('2026-01-01T00:00:00.000Z') });
+  });
+
+  it('converts uuids, lowercasing the result', () => {
+    const result = validateQuery('id:550E8400-E29B-41D4-A716-446655440000');
+
+    expect(result).toMatchObject({ value: '550e8400-e29b-41d4-a716-446655440000' });
+  });
+
+  it('accepts the nil and max uuids', () => {
+    expect(validateQuery('id:00000000-0000-0000-0000-000000000000')).toMatchObject({
+      value: '00000000-0000-0000-0000-000000000000',
+    });
+    expect(validateQuery('id:ffffffff-ffff-ffff-ffff-ffffffffffff')).toMatchObject({
+      value: 'ffffffff-ffff-ffff-ffff-ffffffffffff',
+    });
+  });
+
+  it('rejects malformed uuids', () => {
+    // one hex digit short in the last group
+    const [error] = tryCatch(() => validateQuery('id:550e8400-e29b-41d4-a716-12345678901'));
+
+    expect(error).toBeInstanceOf(SearchCopError);
+    expect((error as SearchCopError).code).toBe('INVALID_VALUE');
+  });
+
+  it('rejects uuids with an invalid version nibble', () => {
+    const [error] = tryCatch(() => validateQuery('id:550e8400-e29b-00d4-a706-446655440000'));
+
+    expect(error).toBeInstanceOf(SearchCopError);
+    expect((error as SearchCopError).code).toBe('INVALID_VALUE');
+  });
+
+  it('rejects uuids with an invalid variant nibble', () => {
+    const [error] = tryCatch(() => validateQuery('id:550e8400-e29b-41d4-c716-446655440000'));
+
+    expect(error).toBeInstanceOf(SearchCopError);
+    expect((error as SearchCopError).code).toBe('INVALID_VALUE');
+  });
+
+  it('accepts uuid versions 1 through 8', () => {
+    for (const version of '12345678') {
+      expect(validateQuery(`id:550e8400-e29b-${version}1d4-a716-446655440000`)).toMatchObject({
+        value: `550e8400-e29b-${version}1d4-a716-446655440000`,
+      });
+    }
   });
 });
 

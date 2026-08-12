@@ -32,8 +32,13 @@ Only attributes declared in `attributes` may be queried. Supported types:
 | `date`     | `Date`         | `=` `!=` `>` `>=` `<` `<=`        |
 | `datetime` | `Date`         | `=` `!=` `>` `>=` `<` `<=`        |
 | `enum`     | `string`       | `=` `!=`                          |
+| `uuid`     | `string`       | `=` `!=`                          |
 
 `enum` attributes also require a `values: string[]` list.
+
+`uuid` values are validated against RFC 9562 (version 1-8 and variant nibbles, plus the nil
+and max UUIDs) using the [`uuid`](https://www.npmjs.com/package/uuid) package, and are
+lowercased on the way out.
 
 ## Query syntax
 
@@ -75,6 +80,13 @@ must be double-quoted. Inside quotes, `\"` and `\\` are unescaped to `"` and `\`
 name:"foo bar"
 name:"(foo)"
 name:"foo \"bar\" baz"                   // foo "bar" baz
+```
+
+### UUIDs
+
+```text
+id:550e8400-e29b-41d4-a716-446655440000
+id:550E8400-E29B-41D4-A716-446655440000     // case-insensitive, lowercased on output
 ```
 
 ### Booleans
