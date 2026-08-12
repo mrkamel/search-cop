@@ -35,7 +35,7 @@ export function validate(expression: Expression, attributes: AttributeMap): Vali
 function validatePredicate(predicate: PredicateExpression, attributes: AttributeMap): ValidatedPredicate {
   const attribute = attributes[predicate.field];
 
-  if (!attribute) {
+  if (!Object.hasOwn(attributes, predicate.field) || !attribute) {
     throw new SearchCopError('UNKNOWN_ATTRIBUTE', `Unknown search attribute "${predicate.field}".`, predicate.position);
   }
 
