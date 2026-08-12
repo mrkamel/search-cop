@@ -24,6 +24,11 @@ Connector
 
 PrimaryExpression
   = "(" _ e:Expression _ ")" { return e }
+  // "NOT" must be immediately followed by whitespace or "(" — otherwise it's just the
+  // start of a field name (e.g. "NOTstatus:online" stays one field, not NOT + "status").
+  // Binds tighter than AND/OR, so it only negates the next term/group; parenthesize to
+  // negate more ("NOT (a b)" negates the whole group; "NOT a b" is "(NOT a) AND b").
+  / "NOT" &[\t\n\r (] _ e:PrimaryExpression { return { type: 'not', child: e } }
   / Predicate
 
 Predicate
@@ -49,9 +54,9 @@ Predicate
         position: location().start.offset + 1,
       }
     }
-  // Bare (unquoted) "AND"/"OR" are always reserved as combinator keywords, even where
-  // they'd otherwise be unambiguous (e.g. as the very first term) — quote them (`"AND"`)
-  // to search for the literal word via the default field.
+  // Bare (unquoted) "AND"/"OR"/"NOT" are always reserved as keywords, even where they'd
+  // otherwise be unambiguous (e.g. as the very first term) — quote them (`"AND"`) to
+  // search for the literal word via the default field.
   / !ReservedWord value:UnquotedValue
     {
       return {
@@ -64,7 +69,7 @@ Predicate
     }
 
 ReservedWord
-  = ("AND" / "OR") ![a-zA-Z0-9_]
+  = ("AND" / "OR" / "NOT") ![a-zA-Z0-9_]
 
 Field "field name"
   = chars:$([a-zA-Z_][a-zA-Z0-9_]*) { return chars }

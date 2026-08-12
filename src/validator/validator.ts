@@ -34,6 +34,9 @@ export function validate({ expression, attributes }: ValidateOptions): Validated
     case 'or':
       return { type: 'or', children: expression.children.map((child) => validate({ expression: child, attributes })) };
 
+    case 'not':
+      return { type: 'not', child: validate({ expression: expression.child, attributes }) };
+
     case 'predicate':
       return validatePredicate(expression, attributes);
   }

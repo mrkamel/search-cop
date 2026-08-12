@@ -1,4 +1,4 @@
-import { Brackets, type ObjectLiteral, type Repository, type SelectQueryBuilder, type WhereExpressionBuilder } from 'typeorm';
+import { Brackets, NotBrackets, type ObjectLiteral, type Repository, type SelectQueryBuilder, type WhereExpressionBuilder } from 'typeorm';
 import type { ValidatedExpression, ValidatedField, ValidatedPredicate } from '../validator/types.js';
 
 type Combinator = 'and' | 'or';
@@ -41,11 +41,18 @@ function applyExpression(builder: WhereExpressionBuilder, alias: string, escape:
     return;
   }
 
+  if (expression.type === 'not') {
+    applyNot(builder, alias, escape, expression.child, 'and');
+    return;
+  }
+
   const combinator: Combinator = expression.type === 'and' ? 'and' : 'or';
 
   expression.children.forEach((child) => {
     if (child.type === 'predicate') {
       applyPredicate(builder, alias, escape, child, combinator);
+    } else if (child.type === 'not') {
+      applyNot(builder, alias, escape, child.child, combinator);
     } else {
       applyBrackets(builder, alias, escape, child, combinator);
     }
@@ -60,6 +67,22 @@ function applyBrackets(
   combinator: Combinator,
 ): void {
   const brackets = new Brackets((inner) => applyExpression(inner, alias, escape, expression));
+
+  if (combinator === 'and') {
+    builder.andWhere(brackets);
+  } else {
+    builder.orWhere(brackets);
+  }
+}
+
+function applyNot(
+  builder: WhereExpressionBuilder,
+  alias: string,
+  escape: Escape,
+  expression: ValidatedExpression,
+  combinator: Combinator,
+): void {
+  const brackets = new NotBrackets((inner) => applyExpression(inner, alias, escape, expression));
 
   if (combinator === 'and') {
     builder.andWhere(brackets);

@@ -19,4 +19,9 @@ export interface OrExpression {
   children: Expression[];
 }
 
-export type Expression = AndExpression | OrExpression | PredicateExpression;
+export interface NotExpression {
+  type: 'not';
+  child: Expression;
+}
+
+export type Expression = AndExpression | OrExpression | NotExpression | PredicateExpression;

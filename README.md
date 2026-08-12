@@ -85,6 +85,20 @@ implies `AND`:
 status:online price:>100                 // == status:online AND price:>100
 ```
 
+Prefix a predicate or parenthesized group with `NOT` to negate it. `NOT` binds tighter than
+`AND`/`OR`, so it only negates the next term or group — parenthesize to negate more than one:
+
+```text
+NOT status:online                        // negates just this predicate
+NOT status:online price:>100             // == (NOT status:online) AND price:>100
+NOT (status:online OR status:pending)    // negates the whole group
+NOT NOT status:online                    // double negation cancels out
+```
+
+`NOT` must be immediately followed by whitespace or `(` — `NOTstatus:online` is a field
+literally named `NOTstatus`, not a negation. `NOT` is reserved the same way `AND`/`OR`
+are (see below) — double-quote it (`"NOT"`) to search for the literal word.
+
 ### Quoted values
 
 Unquoted values end at the first whitespace or parenthesis, so a value containing either
@@ -250,8 +264,9 @@ red status:online     // (name = 'red' OR description = 'red') AND status = 'onl
 ```
 
 If `_all` isn't declared in `attributes`, a bare query throws `UNKNOWN_ATTRIBUTE` like any
-other undeclared field. `AND`/`OR` are always reserved as connector keywords, even as a
-bare term on their own — double-quote them (`"AND"`, `"OR"`) to search for the literal word.
+other undeclared field. `AND`/`OR`/`NOT` are always reserved as keywords, even as a bare
+term on their own — double-quote them (`"AND"`, `"OR"`, `"NOT"`) to search for the literal
+word.
 
 ### UUIDs
 
@@ -308,12 +323,12 @@ enum value, ...) — see [Unparseable values never error](#unparseable-values-ne
 ## Out of scope (for now)
 
 Associations/joins, full-text search (ranking/relevance/stemming — bare terms against
-`_all` are exact/wildcard `LIKE` matches, not a relevance-ranked search), range syntax
-(`1..100`), negation (`!=`/`NOT`), query optimization/planning, pagination/sorting, raw SQL
-as the top-level query language (a `fields` entry can be a [raw expression](#raw-fields),
-but the `query` string itself is always the DSL, never passed through), and additional
-database adapters are intentionally not implemented. The AST is designed so these can be
-added later.
+`_all` are exact/wildcard `LIKE` matches, not a relevance-ranked search), a `!=` operator
+(negate with [`NOT`](#query-syntax) instead), range syntax (`1..100`), query
+optimization/planning, pagination/sorting, raw SQL as the top-level query language (a
+`fields` entry can be a [raw expression](#raw-fields), but the `query` string itself is
+always the DSL, never passed through), and additional database adapters are intentionally
+not implemented. The AST is designed so these can be added later.
 
 ## Development
 

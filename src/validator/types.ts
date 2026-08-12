@@ -33,4 +33,9 @@ export interface ValidatedOr {
   children: ValidatedExpression[];
 }
 
-export type ValidatedExpression = ValidatedAnd | ValidatedOr | ValidatedPredicate;
+export interface ValidatedNot {
+  type: 'not';
+  child: ValidatedExpression;
+}
+
+export type ValidatedExpression = ValidatedAnd | ValidatedOr | ValidatedNot | ValidatedPredicate;

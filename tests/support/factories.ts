@@ -1,5 +1,6 @@
-import type { DeepPartial, Repository } from 'typeorm';
-import { Product } from './product.entity.js';
+import type { DeepPartial } from 'typeorm';
+import { ProductEntity } from './ProductEntity.js';
+import { ProductRepository } from './ProductRepository.js';
 
 function buildCounter() {
   let count = 0;
@@ -11,7 +12,7 @@ function buildCounter() {
 
 const productCounter = buildCounter();
 
-export function buildProduct(overrides: DeepPartial<Product> = {}): DeepPartial<Product> {
+export function buildProduct(overrides: DeepPartial<ProductEntity> = {}): DeepPartial<ProductEntity> {
   const i = productCounter.next();
 
   return {
@@ -25,6 +26,6 @@ export function buildProduct(overrides: DeepPartial<Product> = {}): DeepPartial<
   };
 }
 
-export async function createProduct(repository: Repository<Product>, overrides: DeepPartial<Product> = {}) {
-  return await repository.save(buildProduct(overrides));
+export async function createProduct(overrides: DeepPartial<ProductEntity> = {}) {
+  return await ProductRepository.save(buildProduct(overrides));
 }

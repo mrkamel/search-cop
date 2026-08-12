@@ -1,11 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { DataSource, Repository } from 'typeorm';
 import { parse } from '../../src/parser/parser.js';
 import { validate } from '../../src/validator/validator.js';
 import { compile } from '../../src/compiler/typeorm.js';
-import { createTestDataSource } from '../support/data-source.js';
-import { Product } from '../support/product.entity.js';
+import { AppDataSource } from '../support/AppDataSource.js';
 import type { AttributeMap } from '../../src/attributes/types.js';
+import { ProductRepository } from '../support/ProductRepository.js';
 
 const attributes: AttributeMap = {
   status: { type: 'enum', values: ['online', 'offline', 'pending'] },
@@ -43,22 +42,18 @@ const uuidAttributes: AttributeMap = {
   id: { type: 'uuid' },
 };
 
-let dataSource: DataSource;
-let repository: Repository<Product>;
-
 beforeAll(async () => {
-  dataSource = await createTestDataSource();
-  repository = dataSource.getRepository(Product);
+  await AppDataSource.initialize();
 });
 
 afterAll(async () => {
-  await dataSource.destroy();
+  await AppDataSource.destroy();
 });
 
 function compileQuery({ query, attributeMap = attributes, alias }: { query: string; attributeMap?: AttributeMap; alias?: string }) {
   const validated = validate({ expression: parse(query), attributes: attributeMap });
 
-  return compile({ repository, expression: validated, alias });
+  return compile({ repository: ProductRepository, expression: validated, alias });
 }
 
 describe('compile: simple predicates', () => {
@@ -272,5 +267,48 @@ describe('compile: alias', () => {
 
     expect(sql).toContain('FROM "products" "p"');
     expect(sql).toContain('"p"."status" = ?');
+  });
+});
+
+describe('compile: negation (NOT)', () => {
+  it('wraps a negated predicate in NOT(...)', () => {
+    const [sql, params] = compileQuery({ query: 'NOT status:online' }).getQueryAndParameters();
+
+    expect(sql).toContain('NOT("products"."status" = ?)');
+    expect(params).toEqual(['online']);
+  });
+
+  it('wraps a negated group in NOT(...), preserving the AND/OR structure inside', () => {
+    const [sql, params] = compileQuery({ query: 'NOT (status:online OR status:pending)' }).getQueryAndParameters();
+
+    expect(sql).toContain('NOT(("products"."status" = ? OR "products"."status" = ?))');
+    expect(params).toEqual(['online', 'pending']);
+  });
+
+  it('combines a negated term with a non-negated one via implicit AND', () => {
+    const [sql, params] = compileQuery({ query: 'NOT status:online price:>100' }).getQueryAndParameters();
+
+    expect(sql).toMatch(/NOT\("products"\."status" = \?\) AND .*"products"\."price" > 100/);
+    expect(params).toEqual(['online']);
+  });
+
+  it('double negation compiles to nested NOT(NOT(...))', () => {
+    const [sql] = compileQuery({ query: 'NOT NOT status:online' }).getQueryAndParameters();
+
+    expect(sql).toContain('NOT(NOT("products"."status" = ?))');
+  });
+
+  it('negates a multi-field OR group as a whole, not each field independently', () => {
+    const [sql, params] = compileQuery({ query: 'NOT search:Fred', attributeMap: multiFieldAttributes }).getQueryAndParameters();
+
+    expect(sql).toContain('NOT(("products"."name" = ? OR "products"."description" = ?))');
+    expect(params).toEqual(['Fred', 'Fred']);
+  });
+
+  it('negating an unparseable ("1 = 0") predicate compiles to "NOT(1 = 0)" — i.e. always true', () => {
+    const [sql, params] = compileQuery({ query: 'NOT id:foo', attributeMap: uuidAttributes }).getQueryAndParameters();
+
+    expect(sql).toContain('NOT(1 = 0)');
+    expect(params).toEqual([]);
   });
 });

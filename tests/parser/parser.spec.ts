@@ -183,6 +183,66 @@ describe('parse: boolean expressions', () => {
   });
 });
 
+describe('parse: negation (NOT)', () => {
+  it('negates a predicate', () => {
+    expect(stripPosition(parse('NOT status:online'))).toEqual({ type: 'not', child: predicate('status', '=', 'online') });
+  });
+
+  it('negates a predicate with no space before "("', () => {
+    expect(stripPosition(parse('NOT(status:online)'))).toEqual({ type: 'not', child: predicate('status', '=', 'online') });
+  });
+
+  it('does not split "NOT" from an immediately-following field name', () => {
+    expect(stripPosition(parse('NOTstatus:online'))).toEqual(predicate('NOTstatus', '=', 'online'));
+    expect(stripPosition(parse('NOTABLE:foo'))).toEqual(predicate('NOTABLE', '=', 'foo'));
+  });
+
+  it('binds tighter than AND — negates only the next term, not the rest of the expression', () => {
+    expect(stripPosition(parse('NOT status:online AND price:>100'))).toEqual({
+      type: 'and',
+      children: [{ type: 'not', child: predicate('status', '=', 'online') }, predicate('price', '>', '100')],
+    });
+  });
+
+  it('negates the whole parenthesized group when explicitly grouped', () => {
+    expect(stripPosition(parse('NOT (status:online OR status:pending)'))).toEqual({
+      type: 'not',
+      child: {
+        type: 'or',
+        children: [predicate('status', '=', 'online'), predicate('status', '=', 'pending')],
+      },
+    });
+  });
+
+  it('negates just the next bare term amid implicit AND, not the whole phrase', () => {
+    expect(stripPosition(parse('red NOT blue'))).toEqual({
+      type: 'and',
+      children: [predicate('_all', '=', 'red'), { type: 'not', child: predicate('_all', '=', 'blue') }],
+    });
+
+    expect(stripPosition(parse('NOT red blue'))).toEqual({
+      type: 'and',
+      children: [{ type: 'not', child: predicate('_all', '=', 'red') }, predicate('_all', '=', 'blue')],
+    });
+  });
+
+  it('supports double negation', () => {
+    expect(stripPosition(parse('NOT NOT status:online'))).toEqual({
+      type: 'not',
+      child: { type: 'not', child: predicate('status', '=', 'online') },
+    });
+  });
+
+  it('rejects a bare, unquoted "NOT" as a value — it is always reserved, like "AND"/"OR"', () => {
+    expect(() => parse('NOT')).toThrow(SearchCopError);
+    expect(() => parse('status:online NOT')).toThrow(SearchCopError);
+  });
+
+  it('allows searching for the literal word "NOT" via quoting', () => {
+    expect(stripPosition(parse('"NOT"'))).toEqual(predicate('_all', '=', 'NOT'));
+  });
+});
+
 describe('parse: default field ("_all")', () => {
   it('parses a bare value with no "field:" prefix against "_all"', () => {
     expect(stripPosition(parse('Pet'))).toEqual(predicate('_all', '=', 'Pet'));

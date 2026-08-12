@@ -3,7 +3,7 @@ import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
 export type ProductStatus = 'online' | 'offline' | 'pending';
 
 @Entity('products')
-export class Product {
+export class ProductEntity {
   @PrimaryGeneratedColumn()
   id!: number;
 

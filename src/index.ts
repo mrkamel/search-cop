@@ -38,5 +38,5 @@ export type {
   StringAttributeDefinition,
   UuidAttributeDefinition,
 } from './attributes/types.js';
-export type { AndExpression, Expression, Operator, OrExpression, PredicateExpression } from './ast/types.js';
-export type { ValidatedExpression, ValidatedField, ValidatedOperator, ValidatedPredicate, ValidatedValue } from './validator/types.js';
+export type { AndExpression, Expression, NotExpression, Operator, OrExpression, PredicateExpression } from './ast/types.js';
+export type { ValidatedExpression, ValidatedField, ValidatedNot, ValidatedOperator, ValidatedPredicate, ValidatedValue } from './validator/types.js';

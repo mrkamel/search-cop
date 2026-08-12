@@ -424,3 +424,38 @@ describe('validate: nested boolean expressions', () => {
     });
   });
 });
+
+describe('validate: negation (NOT)', () => {
+  it('validates the negated predicate and wraps it in a "not" node', () => {
+    expect(validateQuery('NOT status:online')).toEqual({
+      type: 'not',
+      child: {
+        type: 'predicate',
+        fields: [{ field: 'status', operator: '=', value: 'online' }],
+        caseSensitive: true,
+        position: expect.any(Number),
+      },
+    });
+  });
+
+  it('validates every predicate inside a negated group', () => {
+    const [error] = tryCatch(() => validateQuery('NOT (status:online AND unknown:foo)'));
+
+    expect(error).toBeInstanceOf(SearchCopError);
+    expect((error as SearchCopError).code).toBe('UNKNOWN_ATTRIBUTE');
+  });
+
+  it('carries an "alwaysFalse" field through negation unchanged (negation is purely a compile-time SQL concern)', () => {
+    expect(validateQuery('NOT status:banana')).toEqual({
+      type: 'not',
+      child: { type: 'predicate', fields: [{ alwaysFalse: true }], caseSensitive: true, position: expect.any(Number) },
+    });
+  });
+
+  it('preserves double negation as nested "not" nodes', () => {
+    expect(validateQuery('NOT NOT status:online')).toMatchObject({
+      type: 'not',
+      child: { type: 'not', child: { fields: [{ field: 'status', value: 'online' }] } },
+    });
+  });
+});
