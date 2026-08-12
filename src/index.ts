@@ -4,6 +4,8 @@ import { validate } from './validator/validator.js';
 import { compile } from './compiler/typeorm.js';
 import type { AttributeMap } from './attributes/types.js';
 
+export { DEFAULT_FIELD } from './parser/parser.js';
+
 export interface SearchOptions<Entity extends ObjectLiteral> {
   repository: Repository<Entity>;
   query: string;

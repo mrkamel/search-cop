@@ -170,9 +170,64 @@ describe('parse: boolean expressions', () => {
     });
   });
 
-  it('rejects lowercase "and"/"or" keywords (case-sensitive grammar)', () => {
-    expect(() => parse('status:a and status:b')).toThrow(SearchCopError);
-    expect(() => parse('status:a or status:b')).toThrow(SearchCopError);
+  it('never treats lowercase "and"/"or" as connectors (case-sensitive grammar) — bare words, they are literal "_all" terms', () => {
+    expect(stripPosition(parse('status:a and status:b'))).toEqual({
+      type: 'and',
+      children: [predicate('status', '=', 'a'), predicate('_all', '=', 'and'), predicate('status', '=', 'b')],
+    });
+
+    expect(stripPosition(parse('status:a or status:b'))).toEqual({
+      type: 'and',
+      children: [predicate('status', '=', 'a'), predicate('_all', '=', 'or'), predicate('status', '=', 'b')],
+    });
+  });
+});
+
+describe('parse: default field ("_all")', () => {
+  it('parses a bare value with no "field:" prefix against "_all"', () => {
+    expect(stripPosition(parse('Pet'))).toEqual(predicate('_all', '=', 'Pet'));
+    expect(stripPosition(parse('Pet*'))).toEqual(predicate('_all', '=', 'Pet*'));
+  });
+
+  it('parses a bare quoted value against "_all"', () => {
+    expect(stripPosition(parse('"foo bar"'))).toEqual(predicate('_all', '=', 'foo bar'));
+  });
+
+  it('combines multiple bare terms with implicit AND (free-text search)', () => {
+    expect(stripPosition(parse('red shoes'))).toEqual({
+      type: 'and',
+      children: [predicate('_all', '=', 'red'), predicate('_all', '=', 'shoes')],
+    });
+  });
+
+  it('mixes bare terms with explicit field:value predicates', () => {
+    expect(stripPosition(parse('red status:online'))).toEqual({
+      type: 'and',
+      children: [predicate('_all', '=', 'red'), predicate('status', '=', 'online')],
+    });
+  });
+
+  it('still recognizes "OR" between two bare terms as the keyword, not a literal term', () => {
+    expect(stripPosition(parse('red OR blue'))).toEqual({
+      type: 'or',
+      children: [predicate('_all', '=', 'red'), predicate('_all', '=', 'blue')],
+    });
+  });
+
+  it('rejects a bare, unquoted "AND"/"OR" as a value — they are always reserved', () => {
+    expect(() => parse('AND')).toThrow(SearchCopError);
+    expect(() => parse('OR')).toThrow(SearchCopError);
+    expect(() => parse('red AND OR blue')).toThrow(SearchCopError);
+  });
+
+  it('allows searching for the literal word "AND"/"OR" via quoting', () => {
+    expect(stripPosition(parse('"AND"'))).toEqual(predicate('_all', '=', 'AND'));
+    expect(stripPosition(parse('"OR"'))).toEqual(predicate('_all', '=', 'OR'));
+  });
+
+  it('does not treat a word merely containing "AND"/"OR" as reserved', () => {
+    expect(stripPosition(parse('ANDROID'))).toEqual(predicate('_all', '=', 'ANDROID'));
+    expect(stripPosition(parse('FOREST'))).toEqual(predicate('_all', '=', 'FOREST'));
   });
 });
 

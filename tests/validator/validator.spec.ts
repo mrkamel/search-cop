@@ -243,6 +243,29 @@ describe('validate: multi-field attributes', () => {
   });
 });
 
+describe('validate: default field ("_all")', () => {
+  it('rejects a bare query when "_all" is not declared in attributes', () => {
+    const [error] = tryCatch(() => validateQuery('Fred'));
+
+    expect(error).toBeInstanceOf(SearchCopError);
+    expect((error as SearchCopError).code).toBe('UNKNOWN_ATTRIBUTE');
+  });
+
+  it('validates a bare query like any other attribute once "_all" is declared', () => {
+    const attributesWithAll: AttributeMap = { ...attributes, _all: { type: 'string', fields: ['name', 'description'] } };
+    const result = validate({ expression: parse('Fred'), attributes: attributesWithAll });
+
+    expect(result).toMatchObject({ fields: ['name', 'description'], operator: '=', value: 'Fred' });
+  });
+
+  it('applies wildcard handling to bare queries the same as any string attribute', () => {
+    const attributesWithAll: AttributeMap = { ...attributes, _all: { type: 'string', fields: ['name', 'description'] } };
+    const result = validate({ expression: parse('Fred*'), attributes: attributesWithAll });
+
+    expect(result).toMatchObject({ fields: ['name', 'description'], operator: 'LIKE', value: 'Fred%' });
+  });
+});
+
 describe('validate: nested boolean expressions', () => {
   it('validates every predicate in a nested expression', () => {
     const [error] = tryCatch(() => validateQuery('status:online AND (price:>100 OR unknown:foo)'));

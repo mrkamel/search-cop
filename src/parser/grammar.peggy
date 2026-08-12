@@ -37,6 +37,34 @@ Predicate
         position: location().start.offset + 1,
       }
     }
+  // A bare value with no "field:" prefix searches the conventional "_all" attribute —
+  // define it in `attributes` (typically as a multi-field attribute) to opt in.
+  / value:QuotedValue
+    {
+      return {
+        type: 'predicate',
+        field: '_all',
+        operator: '=',
+        value,
+        position: location().start.offset + 1,
+      }
+    }
+  // Bare (unquoted) "AND"/"OR" are always reserved as combinator keywords, even where
+  // they'd otherwise be unambiguous (e.g. as the very first term) — quote them (`"AND"`)
+  // to search for the literal word via the default field.
+  / !ReservedWord value:UnquotedValue
+    {
+      return {
+        type: 'predicate',
+        field: '_all',
+        operator: '=',
+        value,
+        position: location().start.offset + 1,
+      }
+    }
+
+ReservedWord
+  = ("AND" / "OR") ![a-zA-Z0-9_]
 
 Field "field name"
   = chars:$([a-zA-Z_][a-zA-Z0-9_]*) { return chars }
@@ -50,7 +78,10 @@ Operator "operator"
 
 Value "value"
   = QuotedValue
-  / chars:$([^\t\n\r ()]+) { return chars }
+  / UnquotedValue
+
+UnquotedValue
+  = chars:$([^\t\n\r ()]+) { return chars }
 
 // Double-quoted values may contain whitespace and parentheses. "\" escapes the
 // following character (e.g. \" for a literal quote, \\ for a literal backslash).

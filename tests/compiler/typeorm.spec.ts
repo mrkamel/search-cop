@@ -23,6 +23,10 @@ const multiFieldAttributes: AttributeMap = {
   search: { type: 'string', fields: ['name', 'description'] },
 };
 
+const defaultFieldAttributes: AttributeMap = {
+  _all: { type: 'string', fields: ['name', 'description'] },
+};
+
 let dataSource: DataSource;
 let repository: Repository<Product>;
 
@@ -168,6 +172,24 @@ describe('compile: multi-field attributes', () => {
     const [sql] = compileQuery({ query: 'status:online' }).getQueryAndParameters();
 
     expect(sql).not.toContain('(("products"."status"');
+  });
+});
+
+describe('compile: default field ("_all")', () => {
+  it('compiles a bare query against "_all", OR-ing its configured fields', () => {
+    const [sql, params] = compileQuery({ query: 'Fred', attributeMap: defaultFieldAttributes }).getQueryAndParameters();
+
+    expect(sql).toContain('("products"."name" = ? OR "products"."description" = ?)');
+    expect(params).toEqual(['Fred', 'Fred']);
+  });
+
+  it('ANDs multiple bare terms together (free-text search)', () => {
+    const [sql, params] = compileQuery({ query: 'red shoes', attributeMap: defaultFieldAttributes }).getQueryAndParameters();
+
+    expect(sql).toMatch(
+      /\("products"."name" = \? OR "products"."description" = \?\) AND \("products"."name" = \? OR "products"."description" = \?\)/,
+    );
+    expect(params).toEqual(['red', 'red', 'shoes', 'shoes']);
   });
 });
 

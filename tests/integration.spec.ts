@@ -22,6 +22,10 @@ const multiFieldAttributes: AttributeMap = {
   search: { type: 'string', fields: ['name', 'description'] },
 };
 
+const defaultFieldAttributes: AttributeMap = {
+  _all: { type: 'string', fields: ['name', 'description'] },
+};
+
 let dataSource: DataSource;
 let repository: Repository<Product>;
 
@@ -194,5 +198,46 @@ describe('search: multi-field attributes', () => {
     const products = await search({ repository, query: 'search:Fred*', attributes: multiFieldAttributes }).getMany();
 
     expect(products.map((product) => product.name).sort()).toEqual([matchesByName.name, matchesByDescription.name].sort());
+  });
+});
+
+describe('search: default field ("_all")', () => {
+  it('rejects a bare query when "_all" is not configured', () => {
+    expect(() => search({ repository, query: 'Fred', attributes })).toThrow(SearchCopError);
+  });
+
+  it('matches a bare query against any configured "_all" field', async () => {
+    const matchesByName = await createProduct(repository, { name: 'Fred', description: 'irrelevant' });
+    const matchesByDescription = await createProduct(repository, { name: 'irrelevant', description: 'Fred' });
+
+    await createProduct(repository, { name: 'other', description: 'other' });
+
+    const products = await search({ repository, query: 'Fred', attributes: defaultFieldAttributes }).getMany();
+
+    expect(products.map((product) => product.name).sort()).toEqual([matchesByName.name, matchesByDescription.name].sort());
+  });
+
+  it('supports free-text search: multiple bare terms are ANDed, each OR-ing across "_all" fields', async () => {
+    // Bare terms use exact "=" (no implicit wildcard), so each term must exactly equal
+    // one of the "_all" fields' values on its own — "red" and "sneakers" here, not
+    // substrings of a longer phrase.
+    const match = await createProduct(repository, { name: 'red', description: 'sneakers' });
+
+    await createProduct(repository, { name: 'blue', description: 'sneakers' });
+    await createProduct(repository, { name: 'red', description: 'hat' });
+
+    const products = await search({ repository, query: 'red sneakers', attributes: defaultFieldAttributes }).getMany();
+
+    expect(products.map((product) => product.name)).toEqual([match.name]);
+  });
+
+  it('mixes bare terms with explicit field:value predicates', async () => {
+    const match = await createProduct(repository, { name: 'Fred', status: 'online' });
+
+    await createProduct(repository, { name: 'Fred', status: 'offline' });
+
+    const products = await search({ repository, query: 'Fred status:online', attributes: { ...attributes, ...defaultFieldAttributes } }).getMany();
+
+    expect(products.map((product) => product.name)).toEqual([match.name]);
   });
 });

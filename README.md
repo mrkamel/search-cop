@@ -51,9 +51,13 @@ Any attribute type accepts an optional `fields: string[]` to match multiple unde
 columns instead of the attribute's own key — see
 [Multi-field attributes](#multi-field-attributes).
 
+A query term with no `field:` prefix is matched against the conventional `_all` attribute
+key — see [Default field](#default-field).
+
 ## Query syntax
 
-A predicate is `field<op>value`. `:` means equality:
+A predicate is `field<op>value`, or just a bare `value` to search the default field (see
+[Default field](#default-field)). `:` means equality:
 
 ```text
 status:online        // equivalent to status:=online
@@ -146,6 +150,40 @@ Only `=` is supported (including its wildcard form) — ordering operators (`>` 
 `<=`) are rejected, since combining multiple columns with `OR` under an ordering comparison
 doesn't have an unambiguous meaning.
 
+### Default field
+
+A query term with no `field:` prefix compiles to a predicate against the conventional
+`_all` attribute key (exported as `DEFAULT_FIELD`). Define it like any other attribute —
+typically as a [multi-field attribute](#multi-field-attributes) — to opt in:
+
+```ts
+import { search, DEFAULT_FIELD } from 'search-cop';
+
+const qb = search({
+  repository: ProductRepository,
+  query: 'red shoes status:online',
+  attributes: {
+    status: { type: 'enum', values: ['online', 'offline'] },
+    [DEFAULT_FIELD]: { type: 'string', fields: ['name', 'description'] },
+  },
+});
+```
+
+Bare terms can be freely combined with explicit `field:value` predicates and with each
+other. Since `AND` is already implicit between predicates, multiple bare terms behave like
+free-text search — each term ORs across the configured fields, and terms AND together:
+
+```text
+red shoes             // (name = 'red' OR description = 'red')
+                      //   AND (name = 'shoes' OR description = 'shoes')
+red* shoes*           // same, but with wildcards on each term
+red status:online     // (name = 'red' OR description = 'red') AND status = 'online'
+```
+
+If `_all` isn't declared in `attributes`, a bare query throws `UNKNOWN_ATTRIBUTE` like any
+other undeclared field. `AND`/`OR` are always reserved as connector keywords, even as a
+bare term on their own — double-quote them (`"AND"`, `"OR"`) to search for the literal word.
+
 ### UUIDs
 
 ```text
@@ -184,9 +222,11 @@ Invalid queries throw a `SearchCopError` with a `code`:
 
 ## Out of scope (for now)
 
-Associations/joins, full-text search, free-text queries, range syntax (`1..100`), negation
-(`!=`/`NOT`), query optimization/planning, pagination/sorting, raw SQL, and additional
-database adapters are intentionally not implemented. The AST is designed so these can be
+Associations/joins, full-text search (ranking/relevance/stemming — bare terms against
+`_all` are exact/wildcard `LIKE` matches, not a relevance-ranked search), range syntax
+(`1..100`), negation (`!=`/`NOT`), query optimization/planning, pagination/sorting, raw
+SQL, and additional database adapters are intentionally not implemented. The AST is designed
+so these can be
 added later.
 
 ## Development
