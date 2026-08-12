@@ -77,7 +77,7 @@ function applyPredicate(
 ): void {
   if (predicate.fields.length === 1) {
     for (const field of predicate.fields) {
-      applyFieldCondition(builder, alias, escape, field, predicate, combinator);
+      applyFieldCondition(builder, alias, escape, field, predicate.caseSensitive, combinator);
     }
 
     return;
@@ -87,7 +87,7 @@ function applyPredicate(
   // (only "=" is supported for multi-field attributes, so this is always an OR).
   const brackets = new Brackets((inner) => {
     for (const field of predicate.fields) {
-      applyFieldCondition(inner, alias, escape, field, predicate, 'or');
+      applyFieldCondition(inner, alias, escape, field, predicate.caseSensitive, 'or');
     }
   });
 
@@ -103,19 +103,32 @@ function applyFieldCondition(
   alias: string,
   escape: Escape,
   field: ValidatedField,
-  predicate: ValidatedPredicate,
+  caseSensitive: boolean,
   combinator: Combinator,
 ): void {
+  // A value that didn't fit its (possibly field-overridden) type — see AttributeFieldType
+  // — never errors; it just can never match, so the field contributes an unconditional
+  // false to the OR/AND rather than a real comparison.
+  if ('alwaysFalse' in field) {
+    if (combinator === 'and') {
+      builder.andWhere('1 = 0');
+    } else {
+      builder.orWhere('1 = 0');
+    }
+
+    return;
+  }
+
   const parameterName = nextParameterName();
-  const escapeClause = predicate.operator === 'LIKE' ? " ESCAPE '\\'" : '';
+  const escapeClause = field.operator === 'LIKE' ? " ESCAPE '\\'" : '';
   // "raw" (see AttributeRawField) is inserted verbatim — no escaping, no alias
   // qualification. A plain field name is escaped and alias-qualified as usual.
   const columnExpression = 'raw' in field ? field.raw : `${escape(alias)}.${escape(field.field)}`;
   // The value is already lowercased by the validator when caseSensitive is false,
   // so only the column needs LOWER() here.
-  const column = predicate.caseSensitive ? columnExpression : `LOWER(${columnExpression})`;
-  const condition = `${column} ${predicate.operator} :${parameterName}${escapeClause}`;
-  const parameters = { [parameterName]: predicate.value };
+  const column = caseSensitive ? columnExpression : `LOWER(${columnExpression})`;
+  const condition = `${column} ${field.operator} :${parameterName}${escapeClause}`;
+  const parameters = { [parameterName]: field.value };
 
   if (combinator === 'and') {
     builder.andWhere(condition, parameters);

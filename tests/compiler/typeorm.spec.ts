@@ -35,6 +35,14 @@ const rawFieldAttributes: AttributeMap = {
   search: { type: 'string', fields: ['name', { raw: 'CAST(price AS TEXT)' }] },
 };
 
+const typedFieldAttributes: AttributeMap = {
+  search: { type: 'string', fields: ['name', { field: 'price', type: 'number' }] },
+};
+
+const uuidAttributes: AttributeMap = {
+  id: { type: 'uuid' },
+};
+
 let dataSource: DataSource;
 let repository: Repository<Product>;
 
@@ -70,7 +78,6 @@ describe('compile: simple predicates', () => {
     expect(sql).toContain('"price" > 100');
     expect(params).toEqual([]);
   });
-
 });
 
 describe('compile: boolean expressions', () => {
@@ -194,6 +201,43 @@ describe('compile: multi-field attributes', () => {
 
     expect(sql).toContain(`CAST(price AS TEXT) LIKE ? ESCAPE '\\'`);
     expect(params).toEqual(['Fred%', 'Fred%']);
+  });
+});
+
+describe('compile: field-level type overrides', () => {
+  it('converts the overridden field using its own type', () => {
+    const [sql, params] = compileQuery({ query: 'search:100', attributeMap: typedFieldAttributes }).getQueryAndParameters();
+
+    expect(sql).toContain('"products"."name" = ?');
+    // The sqlite driver inlines numeric parameters as literals rather than binding them.
+    expect(sql).toContain('"products"."price" = 100');
+    expect(params).toEqual(['100']);
+  });
+
+  it('compiles a non-matching overridden field to an unconditional "1 = 0", not an error', () => {
+    const [sql, params] = compileQuery({ query: 'search:Fred', attributeMap: typedFieldAttributes }).getQueryAndParameters();
+
+    expect(sql).toContain('("products"."name" = ? OR 1 = 0)');
+    expect(params).toEqual(['Fred']);
+  });
+});
+
+describe('compile: unparseable values compile to "1 = 0" for any attribute, not just multi-field ones', () => {
+  it('does not throw, and compiles to an unconditional false', () => {
+    const [sql, params] = compileQuery({ query: 'id:foo', attributeMap: uuidAttributes }).getQueryAndParameters();
+
+    expect(sql).toContain('1 = 0');
+    expect(params).toEqual([]);
+  });
+
+  it('still compiles normally when the value is valid', () => {
+    const [sql, params] = compileQuery({
+      query: 'id:550e8400-e29b-41d4-a716-446655440000',
+      attributeMap: uuidAttributes,
+    }).getQueryAndParameters();
+
+    expect(sql).toContain('"products"."id" = ?');
+    expect(params).toEqual(['550e8400-e29b-41d4-a716-446655440000']);
   });
 });
 

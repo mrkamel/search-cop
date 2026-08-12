@@ -32,6 +32,14 @@ const rawFieldAttributes: AttributeMap = {
   search: { type: 'string', fields: ['name', { raw: 'CAST(id AS TEXT)' }] },
 };
 
+const typedFieldAttributes: AttributeMap = {
+  search: { type: 'string', fields: ['name', { field: 'id', type: 'number' }] },
+};
+
+const uuidAttributes: AttributeMap = {
+  id: { type: 'uuid' },
+};
+
 let dataSource: DataSource;
 let repository: Repository<Product>;
 
@@ -264,5 +272,34 @@ describe('search: "raw" fields for multi-field attributes', () => {
 
     // Matches via the "name" field; the cast "id" field just doesn't match "Fred".
     expect(products.map((product) => product.name)).toEqual([match.name]);
+  });
+});
+
+describe('search: field-level type overrides', () => {
+  it('matches the overridden field using its own type', async () => {
+    const match = await createProduct(repository, { name: 'irrelevant' });
+
+    const products = await search({ repository, query: `search:${match.id}`, attributes: typedFieldAttributes }).getMany();
+
+    expect(products.map((product) => product.name)).toEqual([match.name]);
+  });
+
+  it('does not error, and simply does not match, when the value does not fit the override type', async () => {
+    const match = await createProduct(repository, { name: 'Fred' });
+
+    const products = await search({ repository, query: 'search:Fred', attributes: typedFieldAttributes }).getMany();
+
+    // Matches via the "name" field; the number-typed "id" field just doesn't match "Fred".
+    expect(products.map((product) => product.name)).toEqual([match.name]);
+  });
+});
+
+describe('search: unparseable values never error, for any attribute — not just multi-field ones', () => {
+  it('returns no results instead of throwing when the value does not fit the declared type', async () => {
+    await createProduct(repository, {});
+
+    const products = await search({ repository, query: 'id:foo', attributes: uuidAttributes }).getMany();
+
+    expect(products).toEqual([]);
   });
 });

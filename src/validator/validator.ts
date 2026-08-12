@@ -1,7 +1,7 @@
 import { validate as isUuid } from 'uuid';
 import type { Expression, Operator, PredicateExpression } from '../ast/types.js';
 import type { AttributeDefinition, AttributeField, AttributeMap } from '../attributes/types.js';
-import type { ValidatedExpression, ValidatedField, ValidatedPredicate, ValidatedValue } from './types.js';
+import type { ValidatedExpression, ValidatedField, ValidatedOperator, ValidatedPredicate, ValidatedValue } from './types.js';
 import { SearchCopError } from '../errors/errors.js';
 
 const OPERATORS_BY_TYPE: Record<AttributeDefinition['type'], Operator[]> = {
@@ -56,8 +56,6 @@ function validatePredicate(predicate: PredicateExpression, attributes: Attribute
     );
   }
 
-  const fields = attribute.fields?.length ? normalizeFields(attribute.fields) : [{ field: predicate.field }];
-
   if (attribute.fields?.length && predicate.operator !== '=') {
     throw new SearchCopError(
       'INVALID_OPERATOR',
@@ -66,28 +64,9 @@ function validatePredicate(predicate: PredicateExpression, attributes: Attribute
     );
   }
 
-  const caseSensitive = attribute.type === 'string' ? attribute.caseSensitive ?? true : true;
+  const isWildcard = attribute.type === 'string' && predicate.value.includes('*');
 
-  if (attribute.type === 'string' && predicate.value.includes('*')) {
-    return convertWildcard(predicate, fields, caseSensitive);
-  }
-
-  return {
-    type: 'predicate',
-    fields,
-    operator: predicate.operator,
-    value: convertValue(predicate, attribute),
-    caseSensitive,
-    position: predicate.position,
-  };
-}
-
-function normalizeFields(fields: AttributeField[]): ValidatedField[] {
-  return fields.map((entry) => (typeof entry === 'string' ? { field: entry } : entry));
-}
-
-function convertWildcard(predicate: PredicateExpression, fields: ValidatedField[], caseSensitive: boolean): ValidatedPredicate {
-  if (predicate.operator !== '=') {
+  if (isWildcard && predicate.operator !== '=') {
     throw new SearchCopError(
       'INVALID_OPERATOR',
       `Wildcards ("*") are only supported with "=", got "${predicate.operator}" for attribute "${predicate.field}".`,
@@ -95,16 +74,67 @@ function convertWildcard(predicate: PredicateExpression, fields: ValidatedField[
     );
   }
 
-  const pattern = toLikePattern(predicate.value);
+  const caseSensitive = attribute.type === 'string' ? attribute.caseSensitive ?? true : true;
+  const entries = attribute.fields?.length ? attribute.fields : [predicate.field];
 
   return {
     type: 'predicate',
-    fields,
-    operator: 'LIKE',
-    value: caseSensitive ? pattern : pattern.toLowerCase(),
+    fields: entries.map((entry) => resolveField(entry, predicate, attribute, isWildcard)),
     caseSensitive,
     position: predicate.position,
   };
+}
+
+function resolveField(
+  entry: AttributeField,
+  predicate: PredicateExpression,
+  attribute: AttributeDefinition,
+  isWildcard: boolean,
+): ValidatedField {
+  if (typeof entry === 'string') {
+    return resolveColumn({ field: entry }, predicate, attribute, isWildcard);
+  }
+
+  if ('raw' in entry) {
+    return resolveColumn({ raw: entry.raw }, predicate, attribute, isWildcard);
+  }
+
+  // Field-level type override: validated independently against its own declared type,
+  // ignoring the outer attribute entirely. A wildcard only carries over if this field
+  // is itself "string" — every other type simply can't match a wildcarded value.
+  const { field, ...definition } = entry;
+
+  return resolveColumn({ field }, predicate, definition, isWildcard && definition.type === 'string');
+}
+
+type Column = { field: string } | { raw: string };
+
+function resolveColumn(column: Column, predicate: PredicateExpression, definition: AttributeDefinition, isWildcard: boolean): ValidatedField {
+  const resolved = resolveValue(predicate.value, predicate.operator, definition, isWildcard);
+
+  return resolved === null ? { alwaysFalse: true } : { ...column, ...resolved };
+}
+
+function resolveValue(
+  rawValue: string,
+  operator: Operator,
+  definition: AttributeDefinition,
+  isWildcard: boolean,
+): { value: ValidatedValue; operator: ValidatedOperator } | null {
+  if (isWildcard) {
+    const pattern = toLikePattern(rawValue);
+    const caseSensitive = definition.type === 'string' ? definition.caseSensitive ?? true : true;
+
+    return { value: caseSensitive ? pattern : pattern.toLowerCase(), operator: 'LIKE' };
+  }
+
+  if (!OPERATORS_BY_TYPE[definition.type].includes(operator)) {
+    return null;
+  }
+
+  const value = convertValue(rawValue, definition);
+
+  return value === null ? null : { value, operator };
 }
 
 // Escapes existing "\", "%", and "_" so they match literally, then turns the DSL's
@@ -114,99 +144,70 @@ function toLikePattern(value: string): string {
   return value.replace(/[\\%_]/g, (char) => `\\${char}`).replace(/\*/g, '%');
 }
 
-function convertValue(predicate: PredicateExpression, attribute: AttributeDefinition): ValidatedValue {
-  switch (attribute.type) {
+function convertValue(value: string, definition: AttributeDefinition): ValidatedValue | null {
+  switch (definition.type) {
     case 'string':
-      return attribute.caseSensitive === false ? predicate.value.toLowerCase() : predicate.value;
+      return definition.caseSensitive === false ? value.toLowerCase() : value;
 
     case 'number':
-      return convertNumber(predicate);
+      return convertNumber(value);
 
     case 'boolean':
-      return convertBoolean(predicate);
+      return convertBoolean(value);
 
     case 'date':
-      return convertDate(predicate, false);
+      return convertDate(value, false);
 
     case 'datetime':
-      return convertDate(predicate, true);
+      return convertDate(value, true);
 
     case 'enum':
-      return convertEnum(predicate, attribute.values);
+      return convertEnum(value, definition.values);
 
     case 'uuid':
-      return convertUuid(predicate);
+      return convertUuidValue(value);
   }
 }
 
-function convertNumber(predicate: PredicateExpression): number {
-  if (!/^-?\d+(\.\d+)?$/.test(predicate.value)) {
-    throw new SearchCopError(
-      'INVALID_VALUE',
-      `Invalid number "${predicate.value}" for attribute "${predicate.field}".`,
-      predicate.position,
-    );
-  }
-
-  return Number(predicate.value);
+function convertNumber(value: string): number | null {
+  return /^-?\d+(\.\d+)?$/.test(value) ? Number(value) : null;
 }
 
-function convertBoolean(predicate: PredicateExpression): boolean {
-  if (predicate.value === 'true') {
-    return true;
-  }
+function convertBoolean(value: string): boolean | null {
+  if (value === 'true') return true;
+  if (value === 'false') return false;
 
-  if (predicate.value === 'false') {
-    return false;
-  }
-
-  throw new SearchCopError(
-    'INVALID_VALUE',
-    `Invalid boolean "${predicate.value}" for attribute "${predicate.field}". Expected "true" or "false".`,
-    predicate.position,
-  );
+  return null;
 }
 
-function convertEnum(predicate: PredicateExpression, values: string[]): string {
-  if (!values.includes(predicate.value)) {
-    throw new SearchCopError(
-      'INVALID_ENUM_VALUE',
-      `Invalid value "${predicate.value}" for attribute "${predicate.field}". Expected one of: ${values.join(', ')}.`,
-      predicate.position,
-    );
-  }
-
-  return predicate.value;
+function convertEnum(value: string, values: string[]): string | null {
+  return values.includes(value) ? value : null;
 }
 
-function convertUuid(predicate: PredicateExpression): string {
-  if (!isUuid(predicate.value)) {
-    throw new SearchCopError(
-      'INVALID_VALUE',
-      `Invalid UUID "${predicate.value}" for attribute "${predicate.field}".`,
-      predicate.position,
-    );
-  }
-
-  return predicate.value.toLowerCase();
+function convertUuidValue(value: string): string | null {
+  return isUuid(value) ? value.toLowerCase() : null;
 }
 
-function convertDate(predicate: PredicateExpression, allowTime: boolean): Date {
-  const dateOnlyMatch = DATE_ONLY.exec(predicate.value);
+function convertDate(value: string, allowTime: boolean): Date | null {
+  const dateOnlyMatch = DATE_ONLY.exec(value);
 
   if (dateOnlyMatch) {
     const [, year, month, day] = dateOnlyMatch;
 
-    return buildUtcDate(predicate, Number(year), Number(month), Number(day), 0, 0, 0, 0);
+    return buildUtcDate(Number(year), Number(month), Number(day), 0, 0, 0, 0);
   }
 
   if (allowTime) {
-    const dateTimeMatch = DATE_TIME.exec(predicate.value);
+    const dateTimeMatch = DATE_TIME.exec(value);
 
     if (dateTimeMatch) {
       const [, year, month, day, hour, minute, second, fraction, offset] = dateTimeMatch;
       const millis = fraction ? Math.round(Number(`0.${fraction}`) * 1000) : 0;
-      const date = buildUtcDate(predicate, Number(year), Number(month), Number(day), Number(hour), Number(minute), Number(second), millis);
+      const date = buildUtcDate(Number(year), Number(month), Number(day), Number(hour), Number(minute), Number(second), millis);
+
+      if (date === null) {
+        return null;
+      }
 
       if (offset && offset !== 'Z') {
         const sign = offset.startsWith('-') ? -1 : 1;
@@ -219,33 +220,14 @@ function convertDate(predicate: PredicateExpression, allowTime: boolean): Date {
     }
   }
 
-  throw new SearchCopError(
-    'INVALID_VALUE',
-    `Invalid ${allowTime ? 'datetime' : 'date'} "${predicate.value}" for attribute "${predicate.field}". Expected format "YYYY-MM-DD"${
-      allowTime ? ' or "YYYY-MM-DDTHH:mm:ss[.sss](Z|±HH:mm)"' : ''
-    }.`,
-    predicate.position,
-  );
+  return null;
 }
 
-function buildUtcDate(
-  predicate: PredicateExpression,
-  year: number,
-  month: number,
-  day: number,
-  hour: number,
-  minute: number,
-  second: number,
-  millis: number,
-): Date {
+function buildUtcDate(year: number, month: number, day: number, hour: number, minute: number, second: number, millis: number): Date | null {
   const date = new Date(Date.UTC(year, month - 1, day, hour, minute, second, millis));
 
   if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) {
-    throw new SearchCopError(
-      'INVALID_VALUE',
-      `Invalid date "${predicate.value}" for attribute "${predicate.field}".`,
-      predicate.position,
-    );
+    return null;
   }
 
   return date;

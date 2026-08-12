@@ -26,6 +26,7 @@ export type { SearchCopErrorCode } from './errors/errors.js';
 export type {
   AttributeDefinition,
   AttributeField,
+  AttributeFieldType,
   AttributeMap,
   AttributeRawField,
   AttributeType,

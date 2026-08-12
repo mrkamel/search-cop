@@ -183,8 +183,39 @@ is dialect-specific: `TEXT` works on Postgres and SQLite, but MySQL's `CAST` doe
 character on Postgres. `raw` isn't limited to casting, either — anything a plain column
 name can't express (cleaning up a type's text representation, e.g. trimming a trailing
 `.0`, `COALESCE`, concatenation, ...) is fair game. search-cop never inspects or validates
-`raw` — it's entirely your responsibility, for the same reason as `cast`'s type name above:
-you know your database; search-cop deliberately doesn't try to.
+`raw` — it's entirely your responsibility: you know your database; search-cop deliberately
+doesn't try to.
+
+#### Field-level type overrides
+
+If you'd rather not write SQL at all, give a field its own `type` (and, for `enum`, its
+own `values`) instead of `raw`. search-cop then validates that field independently, using
+its own type's normal conversion — reusing the exact same logic as a regular attribute —
+rather than the outer attribute's `string` type:
+
+```ts
+attributes: {
+  name: {
+    type: 'string',
+    fields: ['firstName', 'lastName', { field: 'id', type: 'uuid' }],
+  },
+}
+```
+
+```text
+name:Fred                                    // firstName = 'Fred' OR lastName = 'Fred'
+                                              //   OR (id is skipped: "Fred" isn't a valid uuid)
+name:550e8400-e29b-41d4-a716-446655440000     // ...OR id = '550e8400-e29b-41d4-a716-446655440000'
+```
+
+Unlike `raw`, a field-level `type` override needs no dialect knowledge and no `CAST` at
+all — a value that doesn't fit the override's type just makes that one field not match
+(see [Unparseable values never error](#unparseable-values-never-error)), while a value
+that *does* fit gets bound normally, letting the database do its own natural type
+coercion. The tradeoff: it only ever produces an exact `=` match, so (unlike `raw`
+casting to text) it can't support wildcards against that field — a wildcarded query
+always fails validation for anything other than `string` (there's always a literal `*`
+in the raw value, and no uuid/number/date/etc. can ever contain one).
 
 ### Default field
 
@@ -248,6 +279,21 @@ createdAt:>=2026-01-01T10:00:00             // 2026-01-01T10:00:00.000Z (UTC)
 createdAt:>=2026-01-01T10:00:00+02:00       // 2026-01-01T08:00:00.000Z
 ```
 
+### Unparseable values never error
+
+A value that doesn't fit its attribute's type — `id:foo` where `id` is a `uuid`,
+`status:banana` where `status` is an `enum`, `price:>banana` where `price` is a `number`,
+and so on — never throws. It simply can't match anything, so it compiles to an
+unconditional `1 = 0` instead of a real comparison. This applies to every attribute type,
+not just multi-field ones or [field-level type overrides](#field-level-type-overrides) —
+it's the same reason those two features can gracefully skip a field instead of erroring
+the whole query.
+
+This is deliberate: search-cop treats "this value can never match this type" as a normal,
+expected outcome of a search — the same as any other query that happens to match zero
+rows — rather than a client error. If you want to reject malformed input before it reaches
+`search()` (e.g. to return a 400 to an API caller), validate it yourself first.
+
 ## Errors
 
 Invalid queries throw a `SearchCopError` with a `code`:
@@ -255,8 +301,9 @@ Invalid queries throw a `SearchCopError` with a `code`:
 - `INVALID_SYNTAX` — the query does not parse (includes an approximate character `position`)
 - `UNKNOWN_ATTRIBUTE` — the field is not declared in `attributes`
 - `INVALID_OPERATOR` — the operator is not supported for the attribute's type (e.g. `status:>online` for an `enum`)
-- `INVALID_VALUE` — the value cannot be converted to the attribute's type
-- `INVALID_ENUM_VALUE` — the value is not one of the enum's declared `values`
+
+Note there's no error for a value that doesn't fit its type (an invalid uuid, an unknown
+enum value, ...) — see [Unparseable values never error](#unparseable-values-never-error).
 
 ## Out of scope (for now)
 

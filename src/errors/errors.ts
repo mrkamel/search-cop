@@ -2,8 +2,6 @@ export type SearchCopErrorCode =
   | 'INVALID_SYNTAX'
   | 'UNKNOWN_ATTRIBUTE'
   | 'INVALID_OPERATOR'
-  | 'INVALID_VALUE'
-  | 'INVALID_ENUM_VALUE'
   ;
 
 export class SearchCopError extends Error {

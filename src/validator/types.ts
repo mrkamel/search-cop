@@ -6,15 +6,19 @@ export type ValidatedValue = string | number | boolean | Date;
 // on string attributes whose value contains a "*" wildcard.
 export type ValidatedOperator = Operator | 'LIKE';
 
-export type ValidatedField = { field: string } | { raw: string };
+// A value that doesn't fit its (possibly field-overridden) type never errors — it
+// simply can never match, compiling to an unconditionally false condition instead
+// of a real comparison.
+export type ValidatedField =
+  | { alwaysFalse: true }
+  | { field: string; value: ValidatedValue; operator: ValidatedOperator }
+  | { raw: string; value: ValidatedValue; operator: ValidatedOperator };
 
 export interface ValidatedPredicate {
   type: 'predicate';
   /** Always non-empty. More than one entry means the fields are OR'd together. */
   fields: ValidatedField[];
-  operator: ValidatedOperator;
-  value: ValidatedValue;
-  /** When false, the compiler matches "value" against each field case-insensitively. */
+  /** When false, the compiler matches each field's value case-insensitively. */
   caseSensitive: boolean;
   position?: number;
 }

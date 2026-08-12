@@ -14,7 +14,15 @@ export interface AttributeRawField {
   raw: string;
 }
 
-export type AttributeField = string | AttributeRawField;
+/**
+ * Validates this field independently against its own declared type, ignoring the
+ * outer attribute's type entirely. If the value doesn't fit this type (or, for a
+ * wildcard query, this field isn't itself "string"), this field simply doesn't
+ * match — the query never errors, and other fields in the group are unaffected.
+ */
+export type AttributeFieldType = { field: string } & AttributeDefinition;
+
+export type AttributeField = string | AttributeRawField | AttributeFieldType;
 
 interface BaseAttributeDefinition {
   type: AttributeType;
