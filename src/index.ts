@@ -32,4 +32,4 @@ export type {
   UuidAttributeDefinition,
 } from './attributes/types.js';
 export type { AndExpression, Expression, Operator, OrExpression, PredicateExpression } from './ast/types.js';
-export type { ValidatedExpression, ValidatedPredicate, ValidatedValue } from './validator/types.js';
+export type { ValidatedExpression, ValidatedOperator, ValidatedPredicate, ValidatedValue } from './validator/types.js';

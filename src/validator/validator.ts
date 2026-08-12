@@ -51,6 +51,10 @@ function validatePredicate(predicate: PredicateExpression, attributes: Attribute
     );
   }
 
+  if (attribute.type === 'string' && predicate.value.includes('*')) {
+    return convertWildcard(predicate);
+  }
+
   return {
     type: 'predicate',
     field: predicate.field,
@@ -58,6 +62,31 @@ function validatePredicate(predicate: PredicateExpression, attributes: Attribute
     value: convertValue(predicate, attribute),
     position: predicate.position,
   };
+}
+
+function convertWildcard(predicate: PredicateExpression): ValidatedPredicate {
+  if (predicate.operator !== '=' && predicate.operator !== '!=') {
+    throw new SearchCopError(
+      'INVALID_OPERATOR',
+      `Wildcards ("*") are only supported with "=" and "!=", got "${predicate.operator}" for attribute "${predicate.field}".`,
+      predicate.position,
+    );
+  }
+
+  return {
+    type: 'predicate',
+    field: predicate.field,
+    operator: predicate.operator === '=' ? 'LIKE' : 'NOT LIKE',
+    value: toLikePattern(predicate.value),
+    position: predicate.position,
+  };
+}
+
+// Escapes existing "\", "%", and "_" so they match literally, then turns the DSL's
+// "*" wildcard into the LIKE wildcard "%". Order matters: escaping runs first so the
+// "%" introduced by "*" is never itself escaped.
+function toLikePattern(value: string): string {
+  return value.replace(/[\\%_]/g, (char) => `\\${char}`).replace(/\*/g, '%');
 }
 
 function convertValue(predicate: PredicateExpression, attribute: AttributeDefinition): ValidatedValue {

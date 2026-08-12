@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import type { DataSource, Repository } from 'typeorm';
 import { search } from '../src/index.js';
+import { SearchCopError } from '../src/errors/errors.js';
 import { createTestDataSource } from './support/data-source.js';
 import { Product } from './support/product.entity.js';
 import { createProduct } from './support/factories.js';
@@ -9,6 +10,7 @@ import type { AttributeMap } from '../src/attributes/types.js';
 const attributes: AttributeMap = {
   status: { type: 'enum', values: ['online', 'offline', 'pending'] },
   price: { type: 'number' },
+  name: { type: 'string' },
 };
 
 let dataSource: DataSource;
@@ -81,5 +83,61 @@ describe('search: end-to-end result sets', () => {
 
     expect(typeof queryBuilder.getMany).toBe('function');
     expect(typeof queryBuilder.getQuery).toBe('function');
+  });
+});
+
+describe('search: wildcards', () => {
+  it('matches a prefix wildcard', async () => {
+    const match = await createProduct(repository, { name: 'Petfood' });
+
+    await createProduct(repository, { name: 'Foodpet' });
+
+    const products = await search({ repository, query: 'name:Pet*', attributes }).getMany();
+
+    expect(products.map((product) => product.name)).toEqual([match.name]);
+  });
+
+  it('matches a suffix wildcard', async () => {
+    const match = await createProduct(repository, { name: 'Bigfred' });
+
+    await createProduct(repository, { name: 'Fredbig' });
+
+    const products = await search({ repository, query: 'name:*fred', attributes }).getMany();
+
+    expect(products.map((product) => product.name)).toEqual([match.name]);
+  });
+
+  it('matches a contains wildcard on both sides', async () => {
+    const match = await createProduct(repository, { name: 'Superpetfoodstore' });
+
+    await createProduct(repository, { name: 'Superstore' });
+
+    const products = await search({ repository, query: 'name:*pet*', attributes }).getMany();
+
+    expect(products.map((product) => product.name)).toEqual([match.name]);
+  });
+
+  it('negates a wildcard with "!="', async () => {
+    const match = await createProduct(repository, { name: 'Foodpet' });
+
+    await createProduct(repository, { name: 'Petfood' });
+
+    const products = await search({ repository, query: 'name:!=Pet*', attributes }).getMany();
+
+    expect(products.map((product) => product.name)).toEqual([match.name]);
+  });
+
+  it('treats a literal "%" in the value as a literal character, not a LIKE wildcard', async () => {
+    const match = await createProduct(repository, { name: '100%organic' });
+
+    await createProduct(repository, { name: '100xorganic' });
+
+    const products = await search({ repository, query: 'name:100%*', attributes }).getMany();
+
+    expect(products.map((product) => product.name)).toEqual([match.name]);
+  });
+
+  it('rejects wildcards combined with ordering operators', () => {
+    expect(() => search({ repository, query: 'name:>Pet*', attributes })).toThrow(SearchCopError);
   });
 });

@@ -44,6 +44,11 @@ describe('parse: operators', () => {
   it('parses date-like values', () => {
     expect(stripPosition(parse('createdAt:>=2026-01-01'))).toEqual(predicate('createdAt', '>=', '2026-01-01'));
   });
+
+  it('parses "*" as a plain value character (wildcard interpretation happens during validation)', () => {
+    expect(stripPosition(parse('name:Pet*'))).toEqual(predicate('name', '=', 'Pet*'));
+    expect(stripPosition(parse('name:*fred'))).toEqual(predicate('name', '=', '*fred'));
+  });
 });
 
 describe('parse: quoted values', () => {

@@ -163,6 +163,41 @@ describe('validate: value conversion', () => {
   });
 });
 
+describe('validate: wildcards', () => {
+  it('turns "=" with a wildcard value into LIKE, translating "*" to "%"', () => {
+    expect(validateQuery('name:Pet*')).toMatchObject({ operator: 'LIKE', value: 'Pet%' });
+    expect(validateQuery('name:*fred')).toMatchObject({ operator: 'LIKE', value: '%fred' });
+    expect(validateQuery('name:*Pet*')).toMatchObject({ operator: 'LIKE', value: '%Pet%' });
+  });
+
+  it('turns "!=" with a wildcard value into NOT LIKE', () => {
+    expect(validateQuery('name:!=Pet*')).toMatchObject({ operator: 'NOT LIKE', value: 'Pet%' });
+  });
+
+  it('escapes literal "%", "_", and "\\" so they are matched literally', () => {
+    expect(validateQuery('name:100%*')).toMatchObject({ value: '100\\%%' });
+    expect(validateQuery('name:a_b*')).toMatchObject({ value: 'a\\_b%' });
+    expect(validateQuery('name:foo\\bar*')).toMatchObject({ value: 'foo\\\\bar%' });
+  });
+
+  it('rejects wildcard values combined with ordering operators', () => {
+    for (const operator of ['>', '>=', '<', '<=']) {
+      const [error] = tryCatch(() => validateQuery(`name:${operator}Pet*`));
+
+      expect(error).toBeInstanceOf(SearchCopError);
+      expect((error as SearchCopError).code).toBe('INVALID_OPERATOR');
+    }
+  });
+
+  it('does not apply wildcard handling to non-string attribute types', () => {
+    // "*" has no special meaning outside of string values, so this is just an invalid enum value.
+    const [error] = tryCatch(() => validateQuery('status:online*'));
+
+    expect(error).toBeInstanceOf(SearchCopError);
+    expect((error as SearchCopError).code).toBe('INVALID_ENUM_VALUE');
+  });
+});
+
 describe('validate: nested boolean expressions', () => {
   it('validates every predicate in a nested expression', () => {
     const [error] = tryCatch(() => validateQuery('status:online AND (price:>100 OR unknown:foo)'));

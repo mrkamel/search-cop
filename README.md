@@ -82,6 +82,24 @@ name:"(foo)"
 name:"foo \"bar\" baz"                   // foo "bar" baz
 ```
 
+### Wildcards
+
+A `*` in a `string` attribute's value (with `=` or `!=`) compiles to a `LIKE` / `NOT LIKE`
+predicate, with `*` translated to SQL's `%`. Any literal `%`, `_`, or `\` in the value is
+escaped so it's matched literally rather than as a `LIKE` wildcard. There's no way to match
+a literal `*` — every `*` is treated as a wildcard. Wildcards are rejected with `>` `>=` `<`
+`<=`, and don't apply to `enum`/`uuid`/other attribute types.
+
+```text
+name:Pet*                                   // starts with "Pet"
+name:*fred                                  // ends with "fred"
+name:*pet*                                  // contains "pet"
+name:!=Pet*                                 // does not start with "Pet"
+```
+
+Case-sensitivity of the match depends on the database's `LIKE` collation (e.g. Postgres'
+`LIKE` is case-sensitive; SQLite's is case-insensitive for ASCII by default).
+
 ### UUIDs
 
 ```text

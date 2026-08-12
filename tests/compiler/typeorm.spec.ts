@@ -11,6 +11,7 @@ const attributes: AttributeMap = {
   status: { type: 'enum', values: ['online', 'offline', 'pending'] },
   price: { type: 'number' },
   createdAt: { type: 'datetime' },
+  name: { type: 'string' },
 };
 
 let dataSource: DataSource;
@@ -96,5 +97,27 @@ describe('compile: boolean expressions', () => {
     const [sql] = compileQuery('status:online').getQueryAndParameters();
 
     expect(sql).not.toContain('online');
+  });
+});
+
+describe('compile: wildcards', () => {
+  it('compiles a wildcard equality predicate to LIKE with an ESCAPE clause', () => {
+    const [sql, params] = compileQuery('name:Pet*').getQueryAndParameters();
+
+    expect(sql).toContain(`"name" LIKE ? ESCAPE '\\'`);
+    expect(params).toEqual(['Pet%']);
+  });
+
+  it('compiles a negated wildcard predicate to NOT LIKE', () => {
+    const [sql, params] = compileQuery('name:!=Pet*').getQueryAndParameters();
+
+    expect(sql).toContain(`"name" NOT LIKE ? ESCAPE '\\'`);
+    expect(params).toEqual(['Pet%']);
+  });
+
+  it('escapes literal "%" and "_" so they are not treated as LIKE wildcards', () => {
+    const [, params] = compileQuery('name:100%_off*').getQueryAndParameters();
+
+    expect(params).toEqual(['100\\%\\_off%']);
   });
 });

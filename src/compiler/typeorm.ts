@@ -52,7 +52,9 @@ function applyBrackets(builder: WhereExpressionBuilder, alias: string, expressio
 
 function applyPredicate(builder: WhereExpressionBuilder, alias: string, predicate: ValidatedPredicate, combinator: Combinator): void {
   const parameterName = nextParameterName();
-  const condition = `${alias}.${predicate.field} ${predicate.operator} :${parameterName}`;
+  const isLike = predicate.operator === 'LIKE' || predicate.operator === 'NOT LIKE';
+  const escapeClause = isLike ? " ESCAPE '\\'" : '';
+  const condition = `${alias}.${predicate.field} ${predicate.operator} :${parameterName}${escapeClause}`;
   const parameters = { [parameterName]: predicate.value };
 
   if (combinator === 'and') {
