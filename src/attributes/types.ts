@@ -6,6 +6,8 @@ interface BaseAttributeDefinition {
 
 export interface StringAttributeDefinition extends BaseAttributeDefinition {
   type: 'string';
+  /** Default: true. When false, "=", "!=", and wildcard matches ignore case. */
+  caseSensitive?: boolean;
 }
 
 export interface UuidAttributeDefinition extends BaseAttributeDefinition {

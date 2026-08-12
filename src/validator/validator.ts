@@ -21,13 +21,18 @@ const OPERATORS_BY_TYPE: Record<AttributeDefinition['type'], Operator[]> = {
 const DATE_ONLY = /^(\d{4})-(\d{2})-(\d{2})$/;
 const DATE_TIME = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?(Z|[+-]\d{2}:\d{2})?$/;
 
-export function validate(expression: Expression, attributes: AttributeMap): ValidatedExpression {
+export interface ValidateOptions {
+  expression: Expression;
+  attributes: AttributeMap;
+}
+
+export function validate({ expression, attributes }: ValidateOptions): ValidatedExpression {
   switch (expression.type) {
     case 'and':
-      return { type: 'and', children: expression.children.map((child) => validate(child, attributes)) };
+      return { type: 'and', children: expression.children.map((child) => validate({ expression: child, attributes })) };
 
     case 'or':
-      return { type: 'or', children: expression.children.map((child) => validate(child, attributes)) };
+      return { type: 'or', children: expression.children.map((child) => validate({ expression: child, attributes })) };
 
     case 'predicate':
       return validatePredicate(expression, attributes);
@@ -51,8 +56,10 @@ function validatePredicate(predicate: PredicateExpression, attributes: Attribute
     );
   }
 
+  const caseSensitive = attribute.type === 'string' ? attribute.caseSensitive ?? true : true;
+
   if (attribute.type === 'string' && predicate.value.includes('*')) {
-    return convertWildcard(predicate);
+    return convertWildcard(predicate, caseSensitive);
   }
 
   return {
@@ -60,11 +67,12 @@ function validatePredicate(predicate: PredicateExpression, attributes: Attribute
     field: predicate.field,
     operator: predicate.operator,
     value: convertValue(predicate, attribute),
+    caseSensitive,
     position: predicate.position,
   };
 }
 
-function convertWildcard(predicate: PredicateExpression): ValidatedPredicate {
+function convertWildcard(predicate: PredicateExpression, caseSensitive: boolean): ValidatedPredicate {
   if (predicate.operator !== '=' && predicate.operator !== '!=') {
     throw new SearchCopError(
       'INVALID_OPERATOR',
@@ -73,11 +81,14 @@ function convertWildcard(predicate: PredicateExpression): ValidatedPredicate {
     );
   }
 
+  const pattern = toLikePattern(predicate.value);
+
   return {
     type: 'predicate',
     field: predicate.field,
     operator: predicate.operator === '=' ? 'LIKE' : 'NOT LIKE',
-    value: toLikePattern(predicate.value),
+    value: caseSensitive ? pattern : pattern.toLowerCase(),
+    caseSensitive,
     position: predicate.position,
   };
 }
@@ -92,7 +103,7 @@ function toLikePattern(value: string): string {
 function convertValue(predicate: PredicateExpression, attribute: AttributeDefinition): ValidatedValue {
   switch (attribute.type) {
     case 'string':
-      return predicate.value;
+      return attribute.caseSensitive === false ? predicate.value.toLowerCase() : predicate.value;
 
     case 'number':
       return convertNumber(predicate);

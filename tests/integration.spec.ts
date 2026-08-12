@@ -13,6 +13,11 @@ const attributes: AttributeMap = {
   name: { type: 'string' },
 };
 
+// Same "name" column as above, but declared case-insensitive.
+const caseInsensitiveAttributes: AttributeMap = {
+  name: { type: 'string', caseSensitive: false },
+};
+
 let dataSource: DataSource;
 let repository: Repository<Product>;
 
@@ -84,6 +89,20 @@ describe('search: end-to-end result sets', () => {
     expect(typeof queryBuilder.getMany).toBe('function');
     expect(typeof queryBuilder.getQuery).toBe('function');
   });
+
+  it('accepts a custom alias and still returns correct results', async () => {
+    const online = await createProduct(repository, { status: 'online' });
+
+    await createProduct(repository, { status: 'offline' });
+
+    const queryBuilder = search({ repository, query: 'status:online', attributes, alias: 'p' });
+
+    expect(queryBuilder.getSql()).toContain('"p"."status"');
+
+    const products = await queryBuilder.getMany();
+
+    expect(products.map((product) => product.name)).toEqual([online.name]);
+  });
 });
 
 describe('search: wildcards', () => {
@@ -139,5 +158,23 @@ describe('search: wildcards', () => {
 
   it('rejects wildcards combined with ordering operators', () => {
     expect(() => search({ repository, query: 'name:>Pet*', attributes })).toThrow(SearchCopError);
+  });
+});
+
+describe('search: case sensitivity', () => {
+  it('is case-sensitive by default: a differently-cased value does not match', async () => {
+    await createProduct(repository, { name: 'FRED' });
+
+    const products = await search({ repository, query: 'name:fred', attributes }).getMany();
+
+    expect(products).toEqual([]);
+  });
+
+  it('matches regardless of case when the attribute is declared case-insensitive', async () => {
+    const match = await createProduct(repository, { name: 'FRED' });
+
+    const products = await search({ repository, query: 'name:fred', attributes: caseInsensitiveAttributes }).getMany();
+
+    expect(products.map((product) => product.name)).toEqual([match.name]);
   });
 });

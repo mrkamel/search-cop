@@ -8,13 +8,15 @@ export interface SearchOptions<Entity extends ObjectLiteral> {
   repository: Repository<Entity>;
   query: string;
   attributes: AttributeMap;
+  /** SQL alias used for the entity's table in the generated query. Defaults to the table name. */
+  alias?: string;
 }
 
 export function search<Entity extends ObjectLiteral>(options: SearchOptions<Entity>): SelectQueryBuilder<Entity> {
   const expression = parse(options.query);
-  const validated = validate(expression, options.attributes);
+  const validated = validate({ expression, attributes: options.attributes });
 
-  return compile(options.repository, validated);
+  return compile({ repository: options.repository, expression: validated, alias: options.alias });
 }
 
 export { SearchCopError } from './errors/errors.js';

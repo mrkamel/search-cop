@@ -20,6 +20,10 @@ const products = await qb.getMany();
 
 `search()` returns a plain TypeORM `SelectQueryBuilder` — nothing is wrapped.
 
+`repository`, `query`, and `attributes` are required. `alias` is optional and defaults to
+the entity's table name — pass it explicitly if you need the generated query to use a
+specific alias (e.g. to match an alias already used elsewhere in a larger query).
+
 ## Attributes
 
 Only attributes declared in `attributes` may be queried. Supported types:
@@ -35,6 +39,9 @@ Only attributes declared in `attributes` may be queried. Supported types:
 | `uuid`     | `string`       | `=` `!=`                          |
 
 `enum` attributes also require a `values: string[]` list.
+
+`string` attributes accept an optional `caseSensitive: boolean` (default `true`) — see
+[Case sensitivity](#case-sensitivity).
 
 `uuid` values are validated against RFC 9562 (version 1-8 and variant nibbles, plus the nil
 and max UUIDs) using the [`uuid`](https://www.npmjs.com/package/uuid) package, and are
@@ -97,8 +104,25 @@ name:*pet*                                  // contains "pet"
 name:!=Pet*                                 // does not start with "Pet"
 ```
 
-Case-sensitivity of the match depends on the database's `LIKE` collation (e.g. Postgres'
-`LIKE` is case-sensitive; SQLite's is case-insensitive for ASCII by default).
+By default, case-sensitivity of the match depends on the database's `LIKE` collation (e.g.
+Postgres' `LIKE` is case-sensitive; SQLite's is case-insensitive for ASCII by default) — see
+[Case sensitivity](#case-sensitivity) for a portable, explicit alternative.
+
+### Case sensitivity
+
+By default, `string` attributes are matched case-sensitively (subject to the database's own
+collation rules, as noted above for wildcards). Set `caseSensitive: false` on the attribute
+definition to make `=`, `!=`, `<` `<=` `>` `>=`, and wildcard matches case-insensitive:
+
+```ts
+attributes: {
+  name: { type: 'string', caseSensitive: false },
+}
+```
+
+This compiles to `LOWER(column) <op> LOWER(value)`, using the standard SQL `LOWER()`
+function so behavior is identical across Postgres, MySQL, and SQLite — rather than a
+database-specific mechanism (e.g. Postgres' `ILIKE` or `citext`, or a `COLLATE` clause).
 
 ### UUIDs
 

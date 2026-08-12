@@ -3,6 +3,13 @@ import type { ValidatedExpression, ValidatedPredicate } from '../validator/types
 
 type Combinator = 'and' | 'or';
 
+// Quotes a table/column/alias name for the connection's SQL dialect (e.g. double
+// quotes for Postgres/SQLite, backticks for MySQL) — the same escaping TypeORM's
+// own query builder uses internally, called explicitly so identifier quoting is
+// this compiler's responsibility rather than an incidental side effect of how
+// TypeORM happens to post-process raw WHERE fragments.
+type Escape = (name: string) => string;
+
 let parameterCounter = 0;
 
 function nextParameterName(): string {
@@ -11,21 +18,26 @@ function nextParameterName(): string {
   return `search_cop_${parameterCounter}`;
 }
 
-export function compile<Entity extends ObjectLiteral>(
-  repository: Repository<Entity>,
-  expression: ValidatedExpression,
-): SelectQueryBuilder<Entity> {
-  const alias = repository.metadata.name;
-  const queryBuilder = repository.createQueryBuilder(alias);
+export interface CompileOptions<Entity extends ObjectLiteral> {
+  repository: Repository<Entity>;
+  expression: ValidatedExpression;
+  /** SQL alias used for the entity's table in the generated query. Defaults to the table name. */
+  alias?: string;
+}
 
-  queryBuilder.where(new Brackets((builder) => applyExpression(builder, alias, expression)));
+export function compile<Entity extends ObjectLiteral>(options: CompileOptions<Entity>): SelectQueryBuilder<Entity> {
+  const { repository, expression, alias = repository.metadata.tableName } = options;
+  const queryBuilder = repository.createQueryBuilder(alias);
+  const escape: Escape = (name) => queryBuilder.escape(name);
+
+  queryBuilder.where(new Brackets((builder) => applyExpression(builder, alias, escape, expression)));
 
   return queryBuilder;
 }
 
-function applyExpression(builder: WhereExpressionBuilder, alias: string, expression: ValidatedExpression): void {
+function applyExpression(builder: WhereExpressionBuilder, alias: string, escape: Escape, expression: ValidatedExpression): void {
   if (expression.type === 'predicate') {
-    applyPredicate(builder, alias, expression, 'and');
+    applyPredicate(builder, alias, escape, expression, 'and');
     return;
   }
 
@@ -33,15 +45,21 @@ function applyExpression(builder: WhereExpressionBuilder, alias: string, express
 
   expression.children.forEach((child) => {
     if (child.type === 'predicate') {
-      applyPredicate(builder, alias, child, combinator);
+      applyPredicate(builder, alias, escape, child, combinator);
     } else {
-      applyBrackets(builder, alias, child, combinator);
+      applyBrackets(builder, alias, escape, child, combinator);
     }
   });
 }
 
-function applyBrackets(builder: WhereExpressionBuilder, alias: string, expression: ValidatedExpression, combinator: Combinator): void {
-  const brackets = new Brackets((inner) => applyExpression(inner, alias, expression));
+function applyBrackets(
+  builder: WhereExpressionBuilder,
+  alias: string,
+  escape: Escape,
+  expression: ValidatedExpression,
+  combinator: Combinator,
+): void {
+  const brackets = new Brackets((inner) => applyExpression(inner, alias, escape, expression));
 
   if (combinator === 'and') {
     builder.andWhere(brackets);
@@ -50,11 +68,21 @@ function applyBrackets(builder: WhereExpressionBuilder, alias: string, expressio
   }
 }
 
-function applyPredicate(builder: WhereExpressionBuilder, alias: string, predicate: ValidatedPredicate, combinator: Combinator): void {
+function applyPredicate(
+  builder: WhereExpressionBuilder,
+  alias: string,
+  escape: Escape,
+  predicate: ValidatedPredicate,
+  combinator: Combinator,
+): void {
   const parameterName = nextParameterName();
   const isLike = predicate.operator === 'LIKE' || predicate.operator === 'NOT LIKE';
   const escapeClause = isLike ? " ESCAPE '\\'" : '';
-  const condition = `${alias}.${predicate.field} ${predicate.operator} :${parameterName}${escapeClause}`;
+  const qualifiedColumn = `${escape(alias)}.${escape(predicate.field)}`;
+  // The value is already lowercased by the validator when caseSensitive is false,
+  // so only the column needs LOWER() here.
+  const column = predicate.caseSensitive ? qualifiedColumn : `LOWER(${qualifiedColumn})`;
+  const condition = `${column} ${predicate.operator} :${parameterName}${escapeClause}`;
   const parameters = { [parameterName]: predicate.value };
 
   if (combinator === 'and') {

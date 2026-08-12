@@ -10,13 +10,14 @@ const attributes: AttributeMap = {
   price: { type: 'number' },
   active: { type: 'boolean' },
   name: { type: 'string' },
+  nameCaseInsensitive: { type: 'string', caseSensitive: false },
   createdAt: { type: 'datetime' },
   releaseDate: { type: 'date' },
   id: { type: 'uuid' },
 };
 
 function validateQuery(query: string) {
-  return validate(parse(query), attributes);
+  return validate({ expression: parse(query), attributes });
 }
 
 describe('validate: attribute checks', () => {
@@ -49,6 +50,7 @@ describe('validate: value conversion', () => {
       field: 'price',
       operator: '>',
       value: 100,
+      caseSensitive: true,
       position: expect.any(Number),
     });
   });
@@ -198,6 +200,29 @@ describe('validate: wildcards', () => {
   });
 });
 
+describe('validate: case sensitivity', () => {
+  it('defaults to case-sensitive for string attributes', () => {
+    expect(validateQuery('name:Fred')).toMatchObject({ value: 'Fred', caseSensitive: true });
+  });
+
+  it('lowercases the value for a case-insensitive attribute, marking the predicate as such', () => {
+    expect(validateQuery('nameCaseInsensitive:Fred')).toMatchObject({ value: 'fred', caseSensitive: false });
+  });
+
+  it('lowercases wildcard values for a case-insensitive attribute too', () => {
+    expect(validateQuery('nameCaseInsensitive:Fred*')).toMatchObject({ operator: 'LIKE', value: 'fred%', caseSensitive: false });
+  });
+
+  it('lowercases ordering comparisons for a case-insensitive attribute too', () => {
+    expect(validateQuery('nameCaseInsensitive:>Fred')).toMatchObject({ operator: '>', value: 'fred', caseSensitive: false });
+  });
+
+  it('marks non-string predicates as case-sensitive regardless', () => {
+    expect(validateQuery('status:online')).toMatchObject({ caseSensitive: true });
+    expect(validateQuery('price:>100')).toMatchObject({ caseSensitive: true });
+  });
+});
+
 describe('validate: nested boolean expressions', () => {
   it('validates every predicate in a nested expression', () => {
     const [error] = tryCatch(() => validateQuery('status:online AND (price:>100 OR unknown:foo)'));
@@ -212,12 +237,12 @@ describe('validate: nested boolean expressions', () => {
     expect(result).toEqual({
       type: 'and',
       children: [
-        { type: 'predicate', field: 'status', operator: '=', value: 'online', position: expect.any(Number) },
+        { type: 'predicate', field: 'status', operator: '=', value: 'online', caseSensitive: true, position: expect.any(Number) },
         {
           type: 'or',
           children: [
-            { type: 'predicate', field: 'price', operator: '>', value: 100, position: expect.any(Number) },
-            { type: 'predicate', field: 'status', operator: '=', value: 'offline', position: expect.any(Number) },
+            { type: 'predicate', field: 'price', operator: '>', value: 100, caseSensitive: true, position: expect.any(Number) },
+            { type: 'predicate', field: 'status', operator: '=', value: 'offline', caseSensitive: true, position: expect.any(Number) },
           ],
         },
       ],

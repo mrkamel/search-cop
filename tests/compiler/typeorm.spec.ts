@@ -14,6 +14,11 @@ const attributes: AttributeMap = {
   name: { type: 'string' },
 };
 
+// Same "name" column as above, but declared case-insensitive.
+const caseInsensitiveAttributes: AttributeMap = {
+  name: { type: 'string', caseSensitive: false },
+};
+
 let dataSource: DataSource;
 let repository: Repository<Product>;
 
@@ -26,15 +31,15 @@ afterAll(async () => {
   await dataSource.destroy();
 });
 
-function compileQuery(query: string) {
-  const validated = validate(parse(query), attributes);
+function compileQuery({ query, attributeMap = attributes, alias }: { query: string; attributeMap?: AttributeMap; alias?: string }) {
+  const validated = validate({ expression: parse(query), attributes: attributeMap });
 
-  return compile(repository, validated);
+  return compile({ repository, expression: validated, alias });
 }
 
 describe('compile: simple predicates', () => {
   it('compiles equality', () => {
-    const [sql, params] = compileQuery('status:online').getQueryAndParameters();
+    const [sql, params] = compileQuery({ query: 'status:online' }).getQueryAndParameters();
 
     expect(sql).toContain('"status" = ?');
     expect(params).toEqual(['online']);
@@ -44,14 +49,14 @@ describe('compile: simple predicates', () => {
     // The sqlite driver inlines numeric parameters as literals rather than binding them,
     // since a JS `number` cannot carry an injection payload. Strings, dates, and booleans
     // are still bound through "?" placeholders (see the tests below).
-    const [sql, params] = compileQuery('price:>100').getQueryAndParameters();
+    const [sql, params] = compileQuery({ query: 'price:>100' }).getQueryAndParameters();
 
     expect(sql).toContain('"price" > 100');
     expect(params).toEqual([]);
   });
 
   it('compiles inequality', () => {
-    const [sql, params] = compileQuery('status:!=offline').getQueryAndParameters();
+    const [sql, params] = compileQuery({ query: 'status:!=offline' }).getQueryAndParameters();
 
     expect(sql).toContain('"status" != ?');
     expect(params).toEqual(['offline']);
@@ -60,41 +65,41 @@ describe('compile: simple predicates', () => {
 
 describe('compile: boolean expressions', () => {
   it('combines predicates with AND', () => {
-    const [sql, params] = compileQuery('status:online AND price:>100').getQueryAndParameters();
+    const [sql, params] = compileQuery({ query: 'status:online AND price:>100' }).getQueryAndParameters();
 
     expect(sql).toMatch(/"status" = \? AND .*"price" > 100/);
     expect(params).toEqual(['online']);
   });
 
   it('combines predicates with OR', () => {
-    const [sql, params] = compileQuery('status:online OR status:pending').getQueryAndParameters();
+    const [sql, params] = compileQuery({ query: 'status:online OR status:pending' }).getQueryAndParameters();
 
     expect(sql).toMatch(/"status" = \? OR .*"status" = \?/);
     expect(params).toEqual(['online', 'pending']);
   });
 
   it('preserves parenthesized precedence: "(A OR B) AND C"', () => {
-    const [sql, params] = compileQuery('(status:online OR status:pending) AND price:>100').getQueryAndParameters();
+    const [sql, params] = compileQuery({ query: '(status:online OR status:pending) AND price:>100' }).getQueryAndParameters();
 
     expect(sql).toMatch(/\(.*"status" = \? OR .*"status" = \?.*\) AND .*"price" > 100/);
     expect(params).toEqual(['online', 'pending']);
   });
 
   it('preserves default precedence: "A OR B AND C" = "A OR (B AND C)"', () => {
-    const [sql, params] = compileQuery('status:online OR status:pending AND price:>100').getQueryAndParameters();
+    const [sql, params] = compileQuery({ query: 'status:online OR status:pending AND price:>100' }).getQueryAndParameters();
 
     expect(sql).toMatch(/"status" = \? OR .*"status" = \? AND .*"price" > 100/);
     expect(params).toEqual(['online', 'pending']);
   });
 
   it('uses a unique parameter for every predicate, even for repeated fields', () => {
-    const parameters = compileQuery('status:online OR status:offline').getParameters();
+    const parameters = compileQuery({ query: 'status:online OR status:offline' }).getParameters();
 
     expect(new Set(Object.keys(parameters)).size).toBe(2);
   });
 
   it('never interpolates string values directly into the SQL string', () => {
-    const [sql] = compileQuery('status:online').getQueryAndParameters();
+    const [sql] = compileQuery({ query: 'status:online' }).getQueryAndParameters();
 
     expect(sql).not.toContain('online');
   });
@@ -102,22 +107,61 @@ describe('compile: boolean expressions', () => {
 
 describe('compile: wildcards', () => {
   it('compiles a wildcard equality predicate to LIKE with an ESCAPE clause', () => {
-    const [sql, params] = compileQuery('name:Pet*').getQueryAndParameters();
+    const [sql, params] = compileQuery({ query: 'name:Pet*' }).getQueryAndParameters();
 
     expect(sql).toContain(`"name" LIKE ? ESCAPE '\\'`);
     expect(params).toEqual(['Pet%']);
   });
 
   it('compiles a negated wildcard predicate to NOT LIKE', () => {
-    const [sql, params] = compileQuery('name:!=Pet*').getQueryAndParameters();
+    const [sql, params] = compileQuery({ query: 'name:!=Pet*' }).getQueryAndParameters();
 
     expect(sql).toContain(`"name" NOT LIKE ? ESCAPE '\\'`);
     expect(params).toEqual(['Pet%']);
   });
 
   it('escapes literal "%" and "_" so they are not treated as LIKE wildcards', () => {
-    const [, params] = compileQuery('name:100%_off*').getQueryAndParameters();
+    const [, params] = compileQuery({ query: 'name:100%_off*' }).getQueryAndParameters();
 
     expect(params).toEqual(['100\\%\\_off%']);
+  });
+});
+
+describe('compile: case sensitivity', () => {
+  it('leaves the column bare for a case-sensitive attribute', () => {
+    const [sql] = compileQuery({ query: 'name:Fred' }).getQueryAndParameters();
+
+    expect(sql).toContain('"name" = ?');
+    expect(sql).not.toContain('LOWER');
+  });
+
+  it('wraps the column in LOWER() for a case-insensitive attribute, and lowercases the bound value', () => {
+    const [sql, params] = compileQuery({ query: 'name:Fred', attributeMap: caseInsensitiveAttributes }).getQueryAndParameters();
+
+    expect(sql).toContain('LOWER("products"."name") = ?');
+    expect(params).toEqual(['fred']);
+  });
+
+  it('wraps the column in LOWER() for a case-insensitive wildcard too', () => {
+    const [sql, params] = compileQuery({ query: 'name:Fred*', attributeMap: caseInsensitiveAttributes }).getQueryAndParameters();
+
+    expect(sql).toContain(`LOWER("products"."name") LIKE ? ESCAPE '\\'`);
+    expect(params).toEqual(['fred%']);
+  });
+});
+
+describe('compile: alias', () => {
+  it('defaults the alias to the entity\'s table name', () => {
+    const [sql] = compileQuery({ query: 'status:online' }).getQueryAndParameters();
+
+    expect(sql).toContain('FROM "products" "products"');
+    expect(sql).toContain('"products"."status" = ?');
+  });
+
+  it('uses an explicitly provided alias instead', () => {
+    const [sql] = compileQuery({ query: 'status:online', alias: 'p' }).getQueryAndParameters();
+
+    expect(sql).toContain('FROM "products" "p"');
+    expect(sql).toContain('"p"."status" = ?');
   });
 });

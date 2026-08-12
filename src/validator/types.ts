@@ -11,6 +11,8 @@ export interface ValidatedPredicate {
   field: string;
   operator: ValidatedOperator;
   value: ValidatedValue;
+  /** When false, the compiler matches "value" against "field" case-insensitively. */
+  caseSensitive: boolean;
   position?: number;
 }
 
