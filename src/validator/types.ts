@@ -6,10 +6,12 @@ export type ValidatedValue = string | number | boolean | Date;
 // on string attributes whose value contains a "*" wildcard.
 export type ValidatedOperator = Operator | 'LIKE';
 
+export type ValidatedField = { field: string } | { raw: string };
+
 export interface ValidatedPredicate {
   type: 'predicate';
   /** Always non-empty. More than one entry means the fields are OR'd together. */
-  fields: string[];
+  fields: ValidatedField[];
   operator: ValidatedOperator;
   value: ValidatedValue;
   /** When false, the compiler matches "value" against each field case-insensitively. */

@@ -27,6 +27,14 @@ const defaultFieldAttributes: AttributeMap = {
   _all: { type: 'string', fields: ['name', 'description'] },
 };
 
+// "price" is a number column — casting it to TEXT lets it be searched as part of a
+// string-typed multi-field group without the database rejecting a non-numeric value.
+// Unqualified (no alias prefix) is fine here: "raw" fields are inserted verbatim,
+// and a bare column name is unambiguous for a single-table query regardless of alias.
+const rawFieldAttributes: AttributeMap = {
+  search: { type: 'string', fields: ['name', { raw: 'CAST(price AS TEXT)' }] },
+};
+
 let dataSource: DataSource;
 let repository: Repository<Product>;
 
@@ -172,6 +180,20 @@ describe('compile: multi-field attributes', () => {
     const [sql] = compileQuery({ query: 'status:online' }).getQueryAndParameters();
 
     expect(sql).not.toContain('(("products"."status"');
+  });
+
+  it('inserts a "raw" field verbatim, unescaped and unqualified, leaving other fields bare', () => {
+    const [sql, params] = compileQuery({ query: 'search:Fred', attributeMap: rawFieldAttributes }).getQueryAndParameters();
+
+    expect(sql).toContain('("products"."name" = ? OR CAST(price AS TEXT) = ?)');
+    expect(params).toEqual(['Fred', 'Fred']);
+  });
+
+  it('applies a "raw" field under a wildcard match too', () => {
+    const [sql, params] = compileQuery({ query: 'search:Fred*', attributeMap: rawFieldAttributes }).getQueryAndParameters();
+
+    expect(sql).toContain(`CAST(price AS TEXT) LIKE ? ESCAPE '\\'`);
+    expect(params).toEqual(['Fred%', 'Fred%']);
   });
 });
 

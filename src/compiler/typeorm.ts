@@ -1,5 +1,5 @@
 import { Brackets, type ObjectLiteral, type Repository, type SelectQueryBuilder, type WhereExpressionBuilder } from 'typeorm';
-import type { ValidatedExpression, ValidatedPredicate } from '../validator/types.js';
+import type { ValidatedExpression, ValidatedField, ValidatedPredicate } from '../validator/types.js';
 
 type Combinator = 'and' | 'or';
 
@@ -102,16 +102,18 @@ function applyFieldCondition(
   builder: WhereExpressionBuilder,
   alias: string,
   escape: Escape,
-  field: string,
+  field: ValidatedField,
   predicate: ValidatedPredicate,
   combinator: Combinator,
 ): void {
   const parameterName = nextParameterName();
   const escapeClause = predicate.operator === 'LIKE' ? " ESCAPE '\\'" : '';
-  const qualifiedColumn = `${escape(alias)}.${escape(field)}`;
+  // "raw" (see AttributeRawField) is inserted verbatim — no escaping, no alias
+  // qualification. A plain field name is escaped and alias-qualified as usual.
+  const columnExpression = 'raw' in field ? field.raw : `${escape(alias)}.${escape(field.field)}`;
   // The value is already lowercased by the validator when caseSensitive is false,
   // so only the column needs LOWER() here.
-  const column = predicate.caseSensitive ? qualifiedColumn : `LOWER(${qualifiedColumn})`;
+  const column = predicate.caseSensitive ? columnExpression : `LOWER(${columnExpression})`;
   const condition = `${column} ${predicate.operator} :${parameterName}${escapeClause}`;
   const parameters = { [parameterName]: predicate.value };
 

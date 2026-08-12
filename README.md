@@ -47,8 +47,8 @@ Only attributes declared in `attributes` may be queried. Supported types:
 and max UUIDs) using the [`uuid`](https://www.npmjs.com/package/uuid) package, and are
 lowercased on the way out.
 
-Any attribute type accepts an optional `fields: string[]` to match multiple underlying
-columns instead of the attribute's own key — see
+Any attribute type accepts an optional `fields` to match multiple underlying columns
+instead of the attribute's own key — see
 [Multi-field attributes](#multi-field-attributes).
 
 A query term with no `field:` prefix is matched against the conventional `_all` attribute
@@ -150,6 +150,42 @@ Only `=` is supported (including its wildcard form) — ordering operators (`>` 
 `<=`) are rejected, since combining multiple columns with `OR` under an ordering comparison
 doesn't have an unambiguous meaning.
 
+#### Raw fields
+
+A `string`-typed multi-field attribute always binds the search value as a plain string
+parameter for every field. If one of the underlying columns is actually a stricter type —
+a `uuid` or integer primary key, say — comparing it directly against an arbitrary string
+can make the *database* reject the query outright (e.g. Postgres: `invalid input syntax for
+type uuid: "foo"`) instead of the field simply not matching. Give that field's entry a
+`raw` SQL expression instead of a plain column name to compare it as text:
+
+```ts
+attributes: {
+  name: {
+    type: 'string',
+    fields: ['firstName', 'lastName', { raw: 'CAST(id AS TEXT)' }],
+  },
+}
+```
+
+```text
+name:Fred     // firstName = 'Fred' OR lastName = 'Fred' OR CAST(id AS TEXT) = 'Fred'
+```
+
+A `raw` entry is inserted verbatim — no escaping, and **no alias-qualification** (unlike a
+plain `fields` string, which is automatically escaped and prefixed with the query's table
+alias). Since search-cop doesn't support joins, an unqualified column reference like `id`
+above is unambiguous either way; if you do need the alias, you're responsible for writing
+it yourself (and for keeping it in sync if you ever pass a custom `alias` to `search()`).
+`CAST` itself is standard SQL and works identically everywhere, but the type-name argument
+is dialect-specific: `TEXT` works on Postgres and SQLite, but MySQL's `CAST` doesn't accept
+`TEXT` (use `CHAR` there instead); conversely a bare `CHAR` silently truncates to a single
+character on Postgres. `raw` isn't limited to casting, either — anything a plain column
+name can't express (cleaning up a type's text representation, e.g. trimming a trailing
+`.0`, `COALESCE`, concatenation, ...) is fair game. search-cop never inspects or validates
+`raw` — it's entirely your responsibility, for the same reason as `cast`'s type name above:
+you know your database; search-cop deliberately doesn't try to.
+
 ### Default field
 
 A query term with no `field:` prefix compiles to a predicate against the conventional
@@ -164,7 +200,9 @@ const qb = search({
   query: 'red shoes status:online',
   attributes: {
     status: { type: 'enum', values: ['online', 'offline'] },
-    [DEFAULT_FIELD]: { type: 'string', fields: ['name', 'description'] },
+    // Fold a uuid primary key into the default field too — a `raw` CAST (see above)
+    // keeps a non-uuid-shaped term from erroring against that column.
+    [DEFAULT_FIELD]: { type: 'string', fields: ['name', 'description', { raw: 'CAST(id AS TEXT)' }] },
   },
 });
 ```
@@ -224,9 +262,10 @@ Invalid queries throw a `SearchCopError` with a `code`:
 
 Associations/joins, full-text search (ranking/relevance/stemming — bare terms against
 `_all` are exact/wildcard `LIKE` matches, not a relevance-ranked search), range syntax
-(`1..100`), negation (`!=`/`NOT`), query optimization/planning, pagination/sorting, raw
-SQL, and additional database adapters are intentionally not implemented. The AST is designed
-so these can be
+(`1..100`), negation (`!=`/`NOT`), query optimization/planning, pagination/sorting, raw SQL
+as the top-level query language (a `fields` entry can be a [raw expression](#raw-fields),
+but the `query` string itself is always the DSL, never passed through), and additional
+database adapters are intentionally not implemented. The AST is designed so these can be
 added later.
 
 ## Development

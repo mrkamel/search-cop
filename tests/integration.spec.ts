@@ -26,6 +26,12 @@ const defaultFieldAttributes: AttributeMap = {
   _all: { type: 'string', fields: ['name', 'description'] },
 };
 
+// "id" is an integer column — casting it to TEXT lets it be searched as part of a
+// string-typed multi-field group without the database rejecting a non-numeric value.
+const rawFieldAttributes: AttributeMap = {
+  search: { type: 'string', fields: ['name', { raw: 'CAST(id AS TEXT)' }] },
+};
+
 let dataSource: DataSource;
 let repository: Repository<Product>;
 
@@ -238,6 +244,25 @@ describe('search: default field ("_all")', () => {
 
     const products = await search({ repository, query: 'Fred status:online', attributes: { ...attributes, ...defaultFieldAttributes } }).getMany();
 
+    expect(products.map((product) => product.name)).toEqual([match.name]);
+  });
+});
+
+describe('search: "raw" fields for multi-field attributes', () => {
+  it('matches an integer column through its cast text representation', async () => {
+    const match = await createProduct(repository, { name: 'irrelevant' });
+
+    const products = await search({ repository, query: `search:${match.id}`, attributes: rawFieldAttributes }).getMany();
+
+    expect(products.map((product) => product.name)).toEqual([match.name]);
+  });
+
+  it('does not error, and simply does not match, when the term is not a valid integer', async () => {
+    const match = await createProduct(repository, { name: 'Fred' });
+
+    const products = await search({ repository, query: 'search:Fred', attributes: rawFieldAttributes }).getMany();
+
+    // Matches via the "name" field; the cast "id" field just doesn't match "Fred".
     expect(products.map((product) => product.name)).toEqual([match.name]);
   });
 });

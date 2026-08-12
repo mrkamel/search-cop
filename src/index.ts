@@ -25,7 +25,9 @@ export { SearchCopError } from './errors/errors.js';
 export type { SearchCopErrorCode } from './errors/errors.js';
 export type {
   AttributeDefinition,
+  AttributeField,
   AttributeMap,
+  AttributeRawField,
   AttributeType,
   BooleanAttributeDefinition,
   DateAttributeDefinition,
@@ -36,4 +38,4 @@ export type {
   UuidAttributeDefinition,
 } from './attributes/types.js';
 export type { AndExpression, Expression, Operator, OrExpression, PredicateExpression } from './ast/types.js';
-export type { ValidatedExpression, ValidatedOperator, ValidatedPredicate, ValidatedValue } from './validator/types.js';
+export type { ValidatedExpression, ValidatedField, ValidatedOperator, ValidatedPredicate, ValidatedValue } from './validator/types.js';

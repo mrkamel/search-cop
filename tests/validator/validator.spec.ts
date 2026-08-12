@@ -48,7 +48,7 @@ describe('validate: value conversion', () => {
   it('converts numbers', () => {
     expect(validateQuery('price:>100')).toEqual({
       type: 'predicate',
-      fields: ['price'],
+      fields: [{ field: 'price' }],
       operator: '>',
       value: 100,
       caseSensitive: true,
@@ -222,15 +222,32 @@ describe('validate: case sensitivity', () => {
 
 describe('validate: multi-field attributes', () => {
   it('defaults "fields" to a single-element array of the attribute key', () => {
-    expect(validateQuery('name:Fred')).toMatchObject({ fields: ['name'] });
+    expect(validateQuery('name:Fred')).toMatchObject({ fields: [{ field: 'name' }] });
   });
 
   it('resolves an attribute\'s "fields" list instead of its own key', () => {
-    expect(validateQuery('search:Fred')).toMatchObject({ fields: ['name', 'description'], operator: '=', value: 'Fred' });
+    expect(validateQuery('search:Fred')).toMatchObject({
+      fields: [{ field: 'name' }, { field: 'description' }],
+      operator: '=',
+      value: 'Fred',
+    });
   });
 
   it('carries "fields" through wildcard matches', () => {
-    expect(validateQuery('search:Fred*')).toMatchObject({ fields: ['name', 'description'], operator: 'LIKE', value: 'Fred%' });
+    expect(validateQuery('search:Fred*')).toMatchObject({
+      fields: [{ field: 'name' }, { field: 'description' }],
+      operator: 'LIKE',
+      value: 'Fred%',
+    });
+  });
+
+  it('normalizes a "fields" raw entry alongside plain string entries', () => {
+    const attributesWithRaw: AttributeMap = {
+      search: { type: 'string', fields: ['name', { raw: 'CAST(id AS TEXT)' }] },
+    };
+    const result = validate({ expression: parse('search:Fred'), attributes: attributesWithRaw });
+
+    expect(result).toMatchObject({ fields: [{ field: 'name' }, { raw: 'CAST(id AS TEXT)' }] });
   });
 
   it('rejects ordering operators for multi-field attributes', () => {
@@ -255,14 +272,28 @@ describe('validate: default field ("_all")', () => {
     const attributesWithAll: AttributeMap = { ...attributes, _all: { type: 'string', fields: ['name', 'description'] } };
     const result = validate({ expression: parse('Fred'), attributes: attributesWithAll });
 
-    expect(result).toMatchObject({ fields: ['name', 'description'], operator: '=', value: 'Fred' });
+    expect(result).toMatchObject({ fields: [{ field: 'name' }, { field: 'description' }], operator: '=', value: 'Fred' });
   });
 
   it('applies wildcard handling to bare queries the same as any string attribute', () => {
     const attributesWithAll: AttributeMap = { ...attributes, _all: { type: 'string', fields: ['name', 'description'] } };
     const result = validate({ expression: parse('Fred*'), attributes: attributesWithAll });
 
-    expect(result).toMatchObject({ fields: ['name', 'description'], operator: 'LIKE', value: 'Fred%' });
+    expect(result).toMatchObject({ fields: [{ field: 'name' }, { field: 'description' }], operator: 'LIKE', value: 'Fred%' });
+  });
+
+  it('supports a "raw" entry in "_all"\'s fields for columns of an incompatible SQL type', () => {
+    const attributesWithAll: AttributeMap = {
+      ...attributes,
+      _all: { type: 'string', fields: ['name', 'description', { raw: 'CAST(id AS TEXT)' }] },
+    };
+    const result = validate({ expression: parse('Fred'), attributes: attributesWithAll });
+
+    expect(result).toMatchObject({
+      fields: [{ field: 'name' }, { field: 'description' }, { raw: 'CAST(id AS TEXT)' }],
+      operator: '=',
+      value: 'Fred',
+    });
   });
 });
 
@@ -280,12 +311,33 @@ describe('validate: nested boolean expressions', () => {
     expect(result).toEqual({
       type: 'and',
       children: [
-        { type: 'predicate', fields: ['status'], operator: '=', value: 'online', caseSensitive: true, position: expect.any(Number) },
+        {
+          type: 'predicate',
+          fields: [{ field: 'status' }],
+          operator: '=',
+          value: 'online',
+          caseSensitive: true,
+          position: expect.any(Number),
+        },
         {
           type: 'or',
           children: [
-            { type: 'predicate', fields: ['price'], operator: '>', value: 100, caseSensitive: true, position: expect.any(Number) },
-            { type: 'predicate', fields: ['status'], operator: '=', value: 'offline', caseSensitive: true, position: expect.any(Number) },
+            {
+              type: 'predicate',
+              fields: [{ field: 'price' }],
+              operator: '>',
+              value: 100,
+              caseSensitive: true,
+              position: expect.any(Number),
+            },
+            {
+              type: 'predicate',
+              fields: [{ field: 'status' }],
+              operator: '=',
+              value: 'offline',
+              caseSensitive: true,
+              position: expect.any(Number),
+            },
           ],
         },
       ],

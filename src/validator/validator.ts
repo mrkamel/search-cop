@@ -1,7 +1,7 @@
 import { validate as isUuid } from 'uuid';
 import type { Expression, Operator, PredicateExpression } from '../ast/types.js';
-import type { AttributeDefinition, AttributeMap } from '../attributes/types.js';
-import type { ValidatedExpression, ValidatedPredicate, ValidatedValue } from './types.js';
+import type { AttributeDefinition, AttributeField, AttributeMap } from '../attributes/types.js';
+import type { ValidatedExpression, ValidatedField, ValidatedPredicate, ValidatedValue } from './types.js';
 import { SearchCopError } from '../errors/errors.js';
 
 const OPERATORS_BY_TYPE: Record<AttributeDefinition['type'], Operator[]> = {
@@ -56,7 +56,7 @@ function validatePredicate(predicate: PredicateExpression, attributes: Attribute
     );
   }
 
-  const fields = attribute.fields?.length ? attribute.fields : [predicate.field];
+  const fields = attribute.fields?.length ? normalizeFields(attribute.fields) : [{ field: predicate.field }];
 
   if (attribute.fields?.length && predicate.operator !== '=') {
     throw new SearchCopError(
@@ -82,7 +82,11 @@ function validatePredicate(predicate: PredicateExpression, attributes: Attribute
   };
 }
 
-function convertWildcard(predicate: PredicateExpression, fields: string[], caseSensitive: boolean): ValidatedPredicate {
+function normalizeFields(fields: AttributeField[]): ValidatedField[] {
+  return fields.map((entry) => (typeof entry === 'string' ? { field: entry } : entry));
+}
+
+function convertWildcard(predicate: PredicateExpression, fields: ValidatedField[], caseSensitive: boolean): ValidatedPredicate {
   if (predicate.operator !== '=') {
     throw new SearchCopError(
       'INVALID_OPERATOR',
