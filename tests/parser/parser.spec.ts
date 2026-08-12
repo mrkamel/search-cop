@@ -37,12 +37,12 @@ describe('parse: operators', () => {
     expect(stripPosition(parse('price:<=100'))).toEqual(predicate('price', '<=', '100'));
   });
 
-  it('parses "!="', () => {
-    expect(stripPosition(parse('status:!=offline'))).toEqual(predicate('status', '!=', 'offline'));
-  });
-
   it('parses date-like values', () => {
     expect(stripPosition(parse('createdAt:>=2026-01-01'))).toEqual(predicate('createdAt', '>=', '2026-01-01'));
+  });
+
+  it('does not recognize "!=" as an operator: "!" is treated as a plain value character', () => {
+    expect(stripPosition(parse('status:!=offline'))).toEqual(predicate('status', '=', '!=offline'));
   });
 
   it('parses "*" as a plain value character (wildcard interpretation happens during validation)', () => {

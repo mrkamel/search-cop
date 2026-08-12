@@ -75,10 +75,40 @@ function applyPredicate(
   predicate: ValidatedPredicate,
   combinator: Combinator,
 ): void {
+  if (predicate.fields.length === 1) {
+    for (const field of predicate.fields) {
+      applyFieldCondition(builder, alias, escape, field, predicate, combinator);
+    }
+
+    return;
+  }
+
+  // Multiple underlying columns for one logical attribute: matches if any field matches
+  // (only "=" is supported for multi-field attributes, so this is always an OR).
+  const brackets = new Brackets((inner) => {
+    for (const field of predicate.fields) {
+      applyFieldCondition(inner, alias, escape, field, predicate, 'or');
+    }
+  });
+
+  if (combinator === 'and') {
+    builder.andWhere(brackets);
+  } else {
+    builder.orWhere(brackets);
+  }
+}
+
+function applyFieldCondition(
+  builder: WhereExpressionBuilder,
+  alias: string,
+  escape: Escape,
+  field: string,
+  predicate: ValidatedPredicate,
+  combinator: Combinator,
+): void {
   const parameterName = nextParameterName();
-  const isLike = predicate.operator === 'LIKE' || predicate.operator === 'NOT LIKE';
-  const escapeClause = isLike ? " ESCAPE '\\'" : '';
-  const qualifiedColumn = `${escape(alias)}.${escape(predicate.field)}`;
+  const escapeClause = predicate.operator === 'LIKE' ? " ESCAPE '\\'" : '';
+  const qualifiedColumn = `${escape(alias)}.${escape(field)}`;
   // The value is already lowercased by the validator when caseSensitive is false,
   // so only the column needs LOWER() here.
   const column = predicate.caseSensitive ? qualifiedColumn : `LOWER(${qualifiedColumn})`;

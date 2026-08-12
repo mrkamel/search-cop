@@ -5,13 +5,13 @@ import type { ValidatedExpression, ValidatedPredicate, ValidatedValue } from './
 import { SearchCopError } from '../errors/errors.js';
 
 const OPERATORS_BY_TYPE: Record<AttributeDefinition['type'], Operator[]> = {
-  string: ['=', '!=', '>', '>=', '<', '<='],
-  number: ['=', '!=', '>', '>=', '<', '<='],
-  boolean: ['=', '!='],
-  date: ['=', '!=', '>', '>=', '<', '<='],
-  datetime: ['=', '!=', '>', '>=', '<', '<='],
-  enum: ['=', '!='],
-  uuid: ['=', '!='],
+  string: ['=', '>', '>=', '<', '<='],
+  number: ['=', '>', '>=', '<', '<='],
+  boolean: ['='],
+  date: ['=', '>', '>=', '<', '<='],
+  datetime: ['=', '>', '>=', '<', '<='],
+  enum: ['='],
+  uuid: ['='],
 };
 
 /**
@@ -56,15 +56,25 @@ function validatePredicate(predicate: PredicateExpression, attributes: Attribute
     );
   }
 
+  const fields = attribute.fields?.length ? attribute.fields : [predicate.field];
+
+  if (attribute.fields?.length && predicate.operator !== '=') {
+    throw new SearchCopError(
+      'INVALID_OPERATOR',
+      `Multi-field attributes only support "=", got "${predicate.operator}" for attribute "${predicate.field}".`,
+      predicate.position,
+    );
+  }
+
   const caseSensitive = attribute.type === 'string' ? attribute.caseSensitive ?? true : true;
 
   if (attribute.type === 'string' && predicate.value.includes('*')) {
-    return convertWildcard(predicate, caseSensitive);
+    return convertWildcard(predicate, fields, caseSensitive);
   }
 
   return {
     type: 'predicate',
-    field: predicate.field,
+    fields,
     operator: predicate.operator,
     value: convertValue(predicate, attribute),
     caseSensitive,
@@ -72,11 +82,11 @@ function validatePredicate(predicate: PredicateExpression, attributes: Attribute
   };
 }
 
-function convertWildcard(predicate: PredicateExpression, caseSensitive: boolean): ValidatedPredicate {
-  if (predicate.operator !== '=' && predicate.operator !== '!=') {
+function convertWildcard(predicate: PredicateExpression, fields: string[], caseSensitive: boolean): ValidatedPredicate {
+  if (predicate.operator !== '=') {
     throw new SearchCopError(
       'INVALID_OPERATOR',
-      `Wildcards ("*") are only supported with "=" and "!=", got "${predicate.operator}" for attribute "${predicate.field}".`,
+      `Wildcards ("*") are only supported with "=", got "${predicate.operator}" for attribute "${predicate.field}".`,
       predicate.position,
     );
   }
@@ -85,8 +95,8 @@ function convertWildcard(predicate: PredicateExpression, caseSensitive: boolean)
 
   return {
     type: 'predicate',
-    field: predicate.field,
-    operator: predicate.operator === '=' ? 'LIKE' : 'NOT LIKE',
+    fields,
+    operator: 'LIKE',
     value: caseSensitive ? pattern : pattern.toLowerCase(),
     caseSensitive,
     position: predicate.position,

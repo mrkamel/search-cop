@@ -14,6 +14,7 @@ const attributes: AttributeMap = {
   createdAt: { type: 'datetime' },
   releaseDate: { type: 'date' },
   id: { type: 'uuid' },
+  search: { type: 'string', fields: ['name', 'description'] },
 };
 
 function validateQuery(query: string) {
@@ -47,7 +48,7 @@ describe('validate: value conversion', () => {
   it('converts numbers', () => {
     expect(validateQuery('price:>100')).toEqual({
       type: 'predicate',
-      field: 'price',
+      fields: ['price'],
       operator: '>',
       value: 100,
       caseSensitive: true,
@@ -172,10 +173,6 @@ describe('validate: wildcards', () => {
     expect(validateQuery('name:*Pet*')).toMatchObject({ operator: 'LIKE', value: '%Pet%' });
   });
 
-  it('turns "!=" with a wildcard value into NOT LIKE', () => {
-    expect(validateQuery('name:!=Pet*')).toMatchObject({ operator: 'NOT LIKE', value: 'Pet%' });
-  });
-
   it('escapes literal "%", "_", and "\\" so they are matched literally', () => {
     expect(validateQuery('name:100%*')).toMatchObject({ value: '100\\%%' });
     expect(validateQuery('name:a_b*')).toMatchObject({ value: 'a\\_b%' });
@@ -223,6 +220,29 @@ describe('validate: case sensitivity', () => {
   });
 });
 
+describe('validate: multi-field attributes', () => {
+  it('defaults "fields" to a single-element array of the attribute key', () => {
+    expect(validateQuery('name:Fred')).toMatchObject({ fields: ['name'] });
+  });
+
+  it('resolves an attribute\'s "fields" list instead of its own key', () => {
+    expect(validateQuery('search:Fred')).toMatchObject({ fields: ['name', 'description'], operator: '=', value: 'Fred' });
+  });
+
+  it('carries "fields" through wildcard matches', () => {
+    expect(validateQuery('search:Fred*')).toMatchObject({ fields: ['name', 'description'], operator: 'LIKE', value: 'Fred%' });
+  });
+
+  it('rejects ordering operators for multi-field attributes', () => {
+    for (const operator of ['>', '>=', '<', '<=']) {
+      const [error] = tryCatch(() => validateQuery(`search:${operator}Fred`));
+
+      expect(error).toBeInstanceOf(SearchCopError);
+      expect((error as SearchCopError).code).toBe('INVALID_OPERATOR');
+    }
+  });
+});
+
 describe('validate: nested boolean expressions', () => {
   it('validates every predicate in a nested expression', () => {
     const [error] = tryCatch(() => validateQuery('status:online AND (price:>100 OR unknown:foo)'));
@@ -237,12 +257,12 @@ describe('validate: nested boolean expressions', () => {
     expect(result).toEqual({
       type: 'and',
       children: [
-        { type: 'predicate', field: 'status', operator: '=', value: 'online', caseSensitive: true, position: expect.any(Number) },
+        { type: 'predicate', fields: ['status'], operator: '=', value: 'online', caseSensitive: true, position: expect.any(Number) },
         {
           type: 'or',
           children: [
-            { type: 'predicate', field: 'price', operator: '>', value: 100, caseSensitive: true, position: expect.any(Number) },
-            { type: 'predicate', field: 'status', operator: '=', value: 'offline', caseSensitive: true, position: expect.any(Number) },
+            { type: 'predicate', fields: ['price'], operator: '>', value: 100, caseSensitive: true, position: expect.any(Number) },
+            { type: 'predicate', fields: ['status'], operator: '=', value: 'offline', caseSensitive: true, position: expect.any(Number) },
           ],
         },
       ],

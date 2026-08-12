@@ -11,6 +11,9 @@ export class Product {
   name!: string;
 
   @Column('varchar')
+  description!: string;
+
+  @Column('varchar')
   status!: ProductStatus;
 
   @Column('float')

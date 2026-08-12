@@ -30,13 +30,13 @@ Only attributes declared in `attributes` may be queried. Supported types:
 
 | Type       | Runtime value | Allowed operators                |
 | ---------- | -------------- | --------------------------------- |
-| `string`   | `string`       | `=` `!=` `>` `>=` `<` `<=`        |
-| `number`   | `number`       | `=` `!=` `>` `>=` `<` `<=`        |
-| `boolean`  | `boolean`      | `=` `!=`                          |
-| `date`     | `Date`         | `=` `!=` `>` `>=` `<` `<=`        |
-| `datetime` | `Date`         | `=` `!=` `>` `>=` `<` `<=`        |
-| `enum`     | `string`       | `=` `!=`                          |
-| `uuid`     | `string`       | `=` `!=`                          |
+| `string`   | `string`       | `=` `>` `>=` `<` `<=`             |
+| `number`   | `number`       | `=` `>` `>=` `<` `<=`             |
+| `boolean`  | `boolean`      | `=`                               |
+| `date`     | `Date`         | `=` `>` `>=` `<` `<=`             |
+| `datetime` | `Date`         | `=` `>` `>=` `<` `<=`             |
+| `enum`     | `string`       | `=`                               |
+| `uuid`     | `string`       | `=`                               |
 
 `enum` attributes also require a `values: string[]` list.
 
@@ -46,6 +46,10 @@ Only attributes declared in `attributes` may be queried. Supported types:
 `uuid` values are validated against RFC 9562 (version 1-8 and variant nibbles, plus the nil
 and max UUIDs) using the [`uuid`](https://www.npmjs.com/package/uuid) package, and are
 lowercased on the way out.
+
+Any attribute type accepts an optional `fields: string[]` to match multiple underlying
+columns instead of the attribute's own key — see
+[Multi-field attributes](#multi-field-attributes).
 
 ## Query syntax
 
@@ -57,7 +61,6 @@ price:>100
 price:>=100
 price:<100
 price:<=100
-status:!=offline
 createdAt:>=2026-01-01
 ```
 
@@ -91,17 +94,16 @@ name:"foo \"bar\" baz"                   // foo "bar" baz
 
 ### Wildcards
 
-A `*` in a `string` attribute's value (with `=` or `!=`) compiles to a `LIKE` / `NOT LIKE`
-predicate, with `*` translated to SQL's `%`. Any literal `%`, `_`, or `\` in the value is
-escaped so it's matched literally rather than as a `LIKE` wildcard. There's no way to match
-a literal `*` — every `*` is treated as a wildcard. Wildcards are rejected with `>` `>=` `<`
-`<=`, and don't apply to `enum`/`uuid`/other attribute types.
+A `*` in a `string` attribute's value (with `=`) compiles to a `LIKE` predicate, with `*`
+translated to SQL's `%`. Any literal `%`, `_`, or `\` in the value is escaped so it's matched
+literally rather than as a `LIKE` wildcard. There's no way to match a literal `*` — every
+`*` is treated as a wildcard. Wildcards are rejected with `>` `>=` `<` `<=`, and don't apply
+to `enum`/`uuid`/other attribute types.
 
 ```text
 name:Pet*                                   // starts with "Pet"
 name:*fred                                  // ends with "fred"
 name:*pet*                                  // contains "pet"
-name:!=Pet*                                 // does not start with "Pet"
 ```
 
 By default, case-sensitivity of the match depends on the database's `LIKE` collation (e.g.
@@ -112,7 +114,7 @@ Postgres' `LIKE` is case-sensitive; SQLite's is case-insensitive for ASCII by de
 
 By default, `string` attributes are matched case-sensitively (subject to the database's own
 collation rules, as noted above for wildcards). Set `caseSensitive: false` on the attribute
-definition to make `=`, `!=`, `<` `<=` `>` `>=`, and wildcard matches case-insensitive:
+definition to make `=`, `<` `<=` `>` `>=`, and wildcard matches case-insensitive:
 
 ```ts
 attributes: {
@@ -123,6 +125,26 @@ attributes: {
 This compiles to `LOWER(column) <op> LOWER(value)`, using the standard SQL `LOWER()`
 function so behavior is identical across Postgres, MySQL, and SQLite — rather than a
 database-specific mechanism (e.g. Postgres' `ILIKE` or `citext`, or a `COLLATE` clause).
+
+### Multi-field attributes
+
+An attribute can match against multiple underlying columns instead of a single one — for
+example, searching a "name" query across both `firstName` and `lastName` columns:
+
+```ts
+attributes: {
+  name: { type: 'string', fields: ['firstName', 'lastName'] },
+}
+```
+
+```text
+name:Fred          // firstName = 'Fred' OR lastName = 'Fred'
+name:Fred*         // (firstName LIKE 'Fred%' ...) OR (lastName LIKE 'Fred%' ...)
+```
+
+Only `=` is supported (including its wildcard form) — ordering operators (`>` `>=` `<`
+`<=`) are rejected, since combining multiple columns with `OR` under an ordering comparison
+doesn't have an unambiguous meaning.
 
 ### UUIDs
 
@@ -162,9 +184,10 @@ Invalid queries throw a `SearchCopError` with a `code`:
 
 ## Out of scope (for now)
 
-Associations/joins, full-text search, free-text queries, range syntax (`1..100`), `NOT`,
-query optimization/planning, pagination/sorting, raw SQL, and additional database adapters
-are intentionally not implemented. The AST is designed so these can be added later.
+Associations/joins, full-text search, free-text queries, range syntax (`1..100`), negation
+(`!=`/`NOT`), query optimization/planning, pagination/sorting, raw SQL, and additional
+database adapters are intentionally not implemented. The AST is designed so these can be
+added later.
 
 ## Development
 

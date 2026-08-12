@@ -42,8 +42,7 @@ Field "field name"
   = chars:$([a-zA-Z_][a-zA-Z0-9_]*) { return chars }
 
 Operator "operator"
-  = "!=" { return '!=' }
-  / ">=" { return '>=' }
+  = ">=" { return '>=' }
   / "<=" { return '<=' }
   / "=" { return '=' }
   / ">" { return '>' }

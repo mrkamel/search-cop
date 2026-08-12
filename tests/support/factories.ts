@@ -16,6 +16,7 @@ export function buildProduct(overrides: DeepPartial<Product> = {}): DeepPartial<
 
   return {
     name: `Product ${i}`,
+    description: `Description ${i}`,
     status: 'online',
     price: 100,
     active: true,

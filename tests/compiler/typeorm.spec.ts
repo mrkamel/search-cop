@@ -19,6 +19,10 @@ const caseInsensitiveAttributes: AttributeMap = {
   name: { type: 'string', caseSensitive: false },
 };
 
+const multiFieldAttributes: AttributeMap = {
+  search: { type: 'string', fields: ['name', 'description'] },
+};
+
 let dataSource: DataSource;
 let repository: Repository<Product>;
 
@@ -55,12 +59,6 @@ describe('compile: simple predicates', () => {
     expect(params).toEqual([]);
   });
 
-  it('compiles inequality', () => {
-    const [sql, params] = compileQuery({ query: 'status:!=offline' }).getQueryAndParameters();
-
-    expect(sql).toContain('"status" != ?');
-    expect(params).toEqual(['offline']);
-  });
 });
 
 describe('compile: boolean expressions', () => {
@@ -113,13 +111,6 @@ describe('compile: wildcards', () => {
     expect(params).toEqual(['Pet%']);
   });
 
-  it('compiles a negated wildcard predicate to NOT LIKE', () => {
-    const [sql, params] = compileQuery({ query: 'name:!=Pet*' }).getQueryAndParameters();
-
-    expect(sql).toContain(`"name" NOT LIKE ? ESCAPE '\\'`);
-    expect(params).toEqual(['Pet%']);
-  });
-
   it('escapes literal "%" and "_" so they are not treated as LIKE wildcards', () => {
     const [, params] = compileQuery({ query: 'name:100%_off*' }).getQueryAndParameters();
 
@@ -147,6 +138,36 @@ describe('compile: case sensitivity', () => {
 
     expect(sql).toContain(`LOWER("products"."name") LIKE ? ESCAPE '\\'`);
     expect(params).toEqual(['fred%']);
+  });
+});
+
+describe('compile: multi-field attributes', () => {
+  it('ORs together each field for "="', () => {
+    const [sql, params] = compileQuery({ query: 'search:Fred', attributeMap: multiFieldAttributes }).getQueryAndParameters();
+
+    expect(sql).toContain('("products"."name" = ? OR "products"."description" = ?)');
+    expect(params).toEqual(['Fred', 'Fred']);
+  });
+
+  it('ORs together each field for a wildcard match', () => {
+    const [sql, params] = compileQuery({ query: 'search:Fred*', attributeMap: multiFieldAttributes }).getQueryAndParameters();
+
+    expect(sql).toContain(`("products"."name" LIKE ? ESCAPE '\\' OR "products"."description" LIKE ? ESCAPE '\\')`);
+    expect(params).toEqual(['Fred%', 'Fred%']);
+  });
+
+  it('uses a unique parameter for every field', () => {
+    const parameters = compileQuery({ query: 'search:Fred', attributeMap: multiFieldAttributes }).getParameters();
+
+    expect(new Set(Object.keys(parameters)).size).toBe(2);
+  });
+
+  it('does not add its own extra bracket around a single-field predicate', () => {
+    // The outer Brackets wrapping the whole expression is pre-existing/unrelated;
+    // a single-field predicate must not additionally double that nesting itself.
+    const [sql] = compileQuery({ query: 'status:online' }).getQueryAndParameters();
+
+    expect(sql).not.toContain('(("products"."status"');
   });
 });
 

@@ -2,11 +2,17 @@ export type AttributeType = 'string' | 'number' | 'boolean' | 'date' | 'datetime
 
 interface BaseAttributeDefinition {
   type: AttributeType;
+  /**
+   * Underlying columns to match against instead of the attribute's own key,
+   * OR'd together (also applies to wildcard matches). Only "=" is supported
+   * when set. Defaults to the attribute's own key.
+   */
+  fields?: string[];
 }
 
 export interface StringAttributeDefinition extends BaseAttributeDefinition {
   type: 'string';
-  /** Default: true. When false, "=", "!=", and wildcard matches ignore case. */
+  /** Default: true. When false, "=" and wildcard matches ignore case. */
   caseSensitive?: boolean;
 }
 

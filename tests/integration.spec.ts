@@ -18,6 +18,10 @@ const caseInsensitiveAttributes: AttributeMap = {
   name: { type: 'string', caseSensitive: false },
 };
 
+const multiFieldAttributes: AttributeMap = {
+  search: { type: 'string', fields: ['name', 'description'] },
+};
+
 let dataSource: DataSource;
 let repository: Repository<Product>;
 
@@ -136,16 +140,6 @@ describe('search: wildcards', () => {
     expect(products.map((product) => product.name)).toEqual([match.name]);
   });
 
-  it('negates a wildcard with "!="', async () => {
-    const match = await createProduct(repository, { name: 'Foodpet' });
-
-    await createProduct(repository, { name: 'Petfood' });
-
-    const products = await search({ repository, query: 'name:!=Pet*', attributes }).getMany();
-
-    expect(products.map((product) => product.name)).toEqual([match.name]);
-  });
-
   it('treats a literal "%" in the value as a literal character, not a LIKE wildcard', async () => {
     const match = await createProduct(repository, { name: '100%organic' });
 
@@ -176,5 +170,29 @@ describe('search: case sensitivity', () => {
     const products = await search({ repository, query: 'name:fred', attributes: caseInsensitiveAttributes }).getMany();
 
     expect(products.map((product) => product.name)).toEqual([match.name]);
+  });
+});
+
+describe('search: multi-field attributes', () => {
+  it('matches if either underlying field matches', async () => {
+    const matchesByName = await createProduct(repository, { name: 'Fred', description: 'irrelevant' });
+    const matchesByDescription = await createProduct(repository, { name: 'irrelevant', description: 'Fred' });
+
+    await createProduct(repository, { name: 'other', description: 'other' });
+
+    const products = await search({ repository, query: 'search:Fred', attributes: multiFieldAttributes }).getMany();
+
+    expect(products.map((product) => product.name).sort()).toEqual([matchesByName.name, matchesByDescription.name].sort());
+  });
+
+  it('supports wildcards across every underlying field', async () => {
+    const matchesByName = await createProduct(repository, { name: 'Frederick', description: 'irrelevant' });
+    const matchesByDescription = await createProduct(repository, { name: 'irrelevant', description: 'Frederick' });
+
+    await createProduct(repository, { name: 'other', description: 'other' });
+
+    const products = await search({ repository, query: 'search:Fred*', attributes: multiFieldAttributes }).getMany();
+
+    expect(products.map((product) => product.name).sort()).toEqual([matchesByName.name, matchesByDescription.name].sort());
   });
 });

@@ -2,16 +2,17 @@ import type { Operator } from '../ast/types.js';
 
 export type ValidatedValue = string | number | boolean | Date;
 
-// LIKE/NOT LIKE never come from the parser — the validator produces them from
-// "=" / "!=" predicates on string attributes whose value contains a "*" wildcard.
-export type ValidatedOperator = Operator | 'LIKE' | 'NOT LIKE';
+// LIKE never comes from the parser — the validator produces it from "=" predicates
+// on string attributes whose value contains a "*" wildcard.
+export type ValidatedOperator = Operator | 'LIKE';
 
 export interface ValidatedPredicate {
   type: 'predicate';
-  field: string;
+  /** Always non-empty. More than one entry means the fields are OR'd together. */
+  fields: string[];
   operator: ValidatedOperator;
   value: ValidatedValue;
-  /** When false, the compiler matches "value" against "field" case-insensitively. */
+  /** When false, the compiler matches "value" against each field case-insensitively. */
   caseSensitive: boolean;
   position?: number;
 }
