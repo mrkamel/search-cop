@@ -221,16 +221,16 @@ describe('validate: multi-field attributes', () => {
     });
   });
 
-  it('normalizes a "fields" raw entry alongside plain string entries', () => {
+  it('treats every "fields" entry as a raw SQL expression, inserted verbatim', () => {
     const attributesWithRaw: AttributeMap = {
-      search: { type: 'string', fields: ['name', { raw: 'CAST(id AS TEXT)' }] },
+      search: { type: 'string', fields: ['name', 'CAST(id AS TEXT)'] },
     };
     const result = validate({ expression: parse('search:Fred'), attributes: attributesWithRaw });
 
     expect(result).toMatchObject({
       fields: [
         { field: 'name', value: 'Fred' },
-        { raw: 'CAST(id AS TEXT)', value: 'Fred' },
+        { field: 'CAST(id AS TEXT)', value: 'Fred' },
       ],
     });
   });
@@ -356,10 +356,10 @@ describe('validate: default field ("_all")', () => {
     });
   });
 
-  it('supports a "raw" entry in "_all"\'s fields for columns of an incompatible SQL type', () => {
+  it('supports a raw SQL expression in "_all"\'s fields for columns of an incompatible SQL type', () => {
     const attributesWithAll: AttributeMap = {
       ...attributes,
-      _all: { type: 'string', fields: ['name', 'description', { raw: 'CAST(id AS TEXT)' }] },
+      _all: { type: 'string', fields: ['name', 'description', 'CAST(id AS TEXT)'] },
     };
     const result = validate({ expression: parse('Fred'), attributes: attributesWithAll });
 
@@ -367,7 +367,7 @@ describe('validate: default field ("_all")', () => {
       fields: [
         { field: 'name', operator: '=', value: 'Fred' },
         { field: 'description', operator: '=', value: 'Fred' },
-        { raw: 'CAST(id AS TEXT)', operator: '=', value: 'Fred' },
+        { field: 'CAST(id AS TEXT)', operator: '=', value: 'Fred' },
       ],
     });
   });

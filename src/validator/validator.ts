@@ -95,11 +95,7 @@ function resolveField(
   isWildcard: boolean,
 ): ValidatedField {
   if (typeof entry === 'string') {
-    return resolveColumn({ field: entry }, predicate, attribute, isWildcard);
-  }
-
-  if ('raw' in entry) {
-    return resolveColumn({ raw: entry.raw }, predicate, attribute, isWildcard);
+    return resolveColumn(entry, predicate, attribute, isWildcard);
   }
 
   // Field-level type override: validated independently against its own declared type,
@@ -107,15 +103,13 @@ function resolveField(
   // is itself "string" — every other type simply can't match a wildcarded value.
   const { field, ...definition } = entry;
 
-  return resolveColumn({ field }, predicate, definition, isWildcard && definition.type === 'string');
+  return resolveColumn(field, predicate, definition, isWildcard && definition.type === 'string');
 }
 
-type Column = { field: string } | { raw: string };
-
-function resolveColumn(column: Column, predicate: PredicateExpression, definition: AttributeDefinition, isWildcard: boolean): ValidatedField {
+function resolveColumn(field: string, predicate: PredicateExpression, definition: AttributeDefinition, isWildcard: boolean): ValidatedField {
   const resolved = resolveValue(predicate.value, predicate.operator, definition, isWildcard);
 
-  return resolved === null ? { alwaysFalse: true } : { ...column, ...resolved };
+  return resolved === null ? { alwaysFalse: true } : { field, ...resolved };
 }
 
 function resolveValue(

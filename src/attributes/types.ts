@@ -1,19 +1,5 @@
 export type AttributeType = 'string' | 'number' | 'boolean' | 'date' | 'datetime' | 'enum' | 'uuid';
 
-export interface AttributeRawField {
-  /**
-   * Inserted verbatim into the SQL, with no escaping and no alias-qualification —
-   * full responsibility is on you for quoting, dialect-specific syntax (e.g. `CAST`
-   * type names), and referencing the right column unambiguously. Useful for
-   * anything a plain column name can't express — casting a stricter-typed column
-   * (uuid, integer) to text so it can be searched alongside string fields without
-   * the database rejecting a non-matching value, cleaning up a type's text
-   * representation (e.g. trimming a trailing ".0"), computed/concatenated columns,
-   * and so on.
-   */
-  raw: string;
-}
-
 /**
  * Validates this field independently against its own declared type, ignoring the
  * outer attribute's type entirely. If the value doesn't fit this type (or, for a
@@ -22,14 +8,22 @@ export interface AttributeRawField {
  */
 export type AttributeFieldType = { field: string } & AttributeDefinition;
 
-export type AttributeField = string | AttributeRawField | AttributeFieldType;
+export type AttributeField = string | AttributeFieldType;
 
 interface BaseAttributeDefinition {
   type: AttributeType;
   /**
-   * Underlying columns to match against instead of the attribute's own key,
-   * OR'd together (also applies to wildcard matches). Only "=" is supported
-   * when set. Defaults to the attribute's own key.
+   * Underlying columns to match against instead of the attribute's own key, OR'd
+   * together (also applies to wildcard matches). Only "=" is supported when set.
+   * Defaults to the attribute's own key.
+   *
+   * Every field is inserted into the SQL verbatim — no escaping, no alias
+   * qualification. search-cop doesn't know your column names are safe unquoted
+   * identifiers, doesn't know your database's quote character, and doesn't
+   * support joins (so there's never a table to disambiguate against) — you do,
+   * so you're responsible for quoting (e.g. `'"createdAt"'` to preserve case on
+   * Postgres) and qualification (e.g. `'author.name'` after your own `leftJoin`)
+   * whenever you need them.
    */
   fields?: AttributeField[];
 }

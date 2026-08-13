@@ -28,7 +28,6 @@ export type {
   AttributeField,
   AttributeFieldType,
   AttributeMap,
-  AttributeRawField,
   AttributeType,
   BooleanAttributeDefinition,
   DateAttributeDefinition,

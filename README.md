@@ -22,7 +22,9 @@ const products = await qb.getMany();
 
 `repository`, `query`, and `attributes` are required. `alias` is optional and defaults to
 the entity's table name — pass it explicitly if you need the generated query to use a
-specific alias (e.g. to match an alias already used elsewhere in a larger query).
+specific alias (e.g. to match an alias already used elsewhere in a larger query). It only
+affects the `FROM`/`SELECT` clauses TypeORM generates on its own; it has no effect on the
+`WHERE` clause, since [`fields`](#multi-field-attributes) are always inserted verbatim.
 
 ## Attributes
 
@@ -164,20 +166,31 @@ Only `=` is supported (including its wildcard form) — ordering operators (`>` 
 `<=`) are rejected, since combining multiple columns with `OR` under an ordering comparison
 doesn't have an unambiguous meaning.
 
-#### Raw fields
+#### Fields are raw SQL
 
-A `string`-typed multi-field attribute always binds the search value as a plain string
-parameter for every field. If one of the underlying columns is actually a stricter type —
-a `uuid` or integer primary key, say — comparing it directly against an arbitrary string
-can make the *database* reject the query outright (e.g. Postgres: `invalid input syntax for
-type uuid: "foo"`) instead of the field simply not matching. Give that field's entry a
-`raw` SQL expression instead of a plain column name to compare it as text:
+Every `fields` entry — whether a plain string, or the implicit default when `fields` is
+omitted (the attribute's own key) — is inserted into the generated SQL **verbatim**: no
+escaping, and no alias-qualification. search-cop doesn't know whether your column name is
+a safe unquoted identifier, doesn't know your database's quote character, and doesn't
+support joins (so there's never a table to disambiguate against) — you do, so quoting
+(e.g. `'"createdAt"'` to preserve case on Postgres) and qualification (e.g. `'author.name'`
+if you've added your own `leftJoin`) are entirely your responsibility whenever you need
+them. A plain `'firstName'` is exactly as raw as any other entry; it's just already a
+valid bare identifier, so it needs nothing extra.
+
+This also means a field entry doesn't have to be a column name at all — anything valid in
+SQL works: a cast, a computed expression, string concatenation, and so on. A `string`-typed
+multi-field attribute always binds the search value as a plain string parameter for every
+field. If one of the underlying columns is actually a stricter type — a `uuid` or integer
+primary key, say — comparing it directly against an arbitrary string can make the
+*database* reject the query outright (e.g. Postgres: `invalid input syntax for type uuid:
+"foo"`) instead of the field simply not matching. Cast that field to text instead:
 
 ```ts
 attributes: {
   name: {
     type: 'string',
-    fields: ['firstName', 'lastName', { raw: 'CAST(id AS TEXT)' }],
+    fields: ['firstName', 'lastName', 'CAST(id AS TEXT)'],
   },
 }
 ```
@@ -186,24 +199,17 @@ attributes: {
 name:Fred     // firstName = 'Fred' OR lastName = 'Fred' OR CAST(id AS TEXT) = 'Fred'
 ```
 
-A `raw` entry is inserted verbatim — no escaping, and **no alias-qualification** (unlike a
-plain `fields` string, which is automatically escaped and prefixed with the query's table
-alias). Since search-cop doesn't support joins, an unqualified column reference like `id`
-above is unambiguous either way; if you do need the alias, you're responsible for writing
-it yourself (and for keeping it in sync if you ever pass a custom `alias` to `search()`).
 `CAST` itself is standard SQL and works identically everywhere, but the type-name argument
 is dialect-specific: `TEXT` works on Postgres and SQLite, but MySQL's `CAST` doesn't accept
 `TEXT` (use `CHAR` there instead); conversely a bare `CHAR` silently truncates to a single
-character on Postgres. `raw` isn't limited to casting, either — anything a plain column
-name can't express (cleaning up a type's text representation, e.g. trimming a trailing
-`.0`, `COALESCE`, concatenation, ...) is fair game. search-cop never inspects or validates
-`raw` — it's entirely your responsibility: you know your database; search-cop deliberately
-doesn't try to.
+character on Postgres. search-cop never inspects or validates a `fields` entry — it's
+entirely your responsibility: you know your database; search-cop deliberately doesn't try
+to.
 
 #### Field-level type overrides
 
 If you'd rather not write SQL at all, give a field its own `type` (and, for `enum`, its
-own `values`) instead of `raw`. search-cop then validates that field independently, using
+own `values`) instead of casting. search-cop then validates that field independently, using
 its own type's normal conversion — reusing the exact same logic as a regular attribute —
 rather than the outer attribute's `string` type:
 
@@ -222,14 +228,14 @@ name:Fred                                    // firstName = 'Fred' OR lastName =
 name:550e8400-e29b-41d4-a716-446655440000     // ...OR id = '550e8400-e29b-41d4-a716-446655440000'
 ```
 
-Unlike `raw`, a field-level `type` override needs no dialect knowledge and no `CAST` at
+Unlike casting, a field-level `type` override needs no dialect knowledge and no `CAST` at
 all — a value that doesn't fit the override's type just makes that one field not match
 (see [Unparseable values never error](#unparseable-values-never-error)), while a value
 that *does* fit gets bound normally, letting the database do its own natural type
-coercion. The tradeoff: it only ever produces an exact `=` match, so (unlike `raw`
-casting to text) it can't support wildcards against that field — a wildcarded query
-always fails validation for anything other than `string` (there's always a literal `*`
-in the raw value, and no uuid/number/date/etc. can ever contain one).
+coercion. The tradeoff: it only ever produces an exact `=` match, so (unlike casting to
+text) it can't support wildcards against that field — a wildcarded query always fails
+validation for anything other than `string` (there's always a literal `*` in the raw
+value, and no uuid/number/date/etc. can ever contain one).
 
 ### Default field
 
@@ -245,9 +251,9 @@ const qb = search({
   query: 'red shoes status:online',
   attributes: {
     status: { type: 'enum', values: ['online', 'offline'] },
-    // Fold a uuid primary key into the default field too — a `raw` CAST (see above)
-    // keeps a non-uuid-shaped term from erroring against that column.
-    [DEFAULT_FIELD]: { type: 'string', fields: ['name', 'description', { raw: 'CAST(id AS TEXT)' }] },
+    // Fold a uuid primary key into the default field too — casting it to text (see
+    // above) keeps a non-uuid-shaped term from erroring against that column.
+    [DEFAULT_FIELD]: { type: 'string', fields: ['name', 'description', 'CAST(id AS TEXT)'] },
   },
 });
 ```
@@ -326,9 +332,9 @@ Associations/joins, full-text search (ranking/relevance/stemming — bare terms 
 `_all` are exact/wildcard `LIKE` matches, not a relevance-ranked search), a `!=` operator
 (negate with [`NOT`](#query-syntax) instead), range syntax (`1..100`), query
 optimization/planning, pagination/sorting, raw SQL as the top-level query language (a
-`fields` entry can be a [raw expression](#raw-fields), but the `query` string itself is
-always the DSL, never passed through), and additional database adapters are intentionally
-not implemented. The AST is designed so these can be added later.
+[`fields` entry](#fields-are-raw-sql) is raw SQL, but the `query` string itself is always
+the DSL, never passed through), and additional database adapters are intentionally not
+implemented. The AST is designed so these can be added later.
 
 ## Development
 

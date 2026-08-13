@@ -3,13 +3,6 @@ import type { ValidatedExpression, ValidatedField, ValidatedPredicate } from '..
 
 type Combinator = 'and' | 'or';
 
-// Quotes a table/column/alias name for the connection's SQL dialect (e.g. double
-// quotes for Postgres/SQLite, backticks for MySQL) — the same escaping TypeORM's
-// own query builder uses internally, called explicitly so identifier quoting is
-// this compiler's responsibility rather than an incidental side effect of how
-// TypeORM happens to post-process raw WHERE fragments.
-type Escape = (name: string) => string;
-
 let parameterCounter = 0;
 
 function nextParameterName(): string {
@@ -28,21 +21,20 @@ export interface CompileOptions<Entity extends ObjectLiteral> {
 export function compile<Entity extends ObjectLiteral>(options: CompileOptions<Entity>): SelectQueryBuilder<Entity> {
   const { repository, expression, alias = repository.metadata.tableName } = options;
   const queryBuilder = repository.createQueryBuilder(alias);
-  const escape: Escape = (name) => queryBuilder.escape(name);
 
-  queryBuilder.where(new Brackets((builder) => applyExpression(builder, alias, escape, expression)));
+  queryBuilder.where(new Brackets((builder) => applyExpression(builder, expression)));
 
   return queryBuilder;
 }
 
-function applyExpression(builder: WhereExpressionBuilder, alias: string, escape: Escape, expression: ValidatedExpression): void {
+function applyExpression(builder: WhereExpressionBuilder, expression: ValidatedExpression): void {
   if (expression.type === 'predicate') {
-    applyPredicate(builder, alias, escape, expression, 'and');
+    applyPredicate(builder, expression, 'and');
     return;
   }
 
   if (expression.type === 'not') {
-    applyNot(builder, alias, escape, expression.child, 'and');
+    applyNot(builder, expression.child, 'and');
     return;
   }
 
@@ -50,23 +42,17 @@ function applyExpression(builder: WhereExpressionBuilder, alias: string, escape:
 
   expression.children.forEach((child) => {
     if (child.type === 'predicate') {
-      applyPredicate(builder, alias, escape, child, combinator);
+      applyPredicate(builder, child, combinator);
     } else if (child.type === 'not') {
-      applyNot(builder, alias, escape, child.child, combinator);
+      applyNot(builder, child.child, combinator);
     } else {
-      applyBrackets(builder, alias, escape, child, combinator);
+      applyBrackets(builder, child, combinator);
     }
   });
 }
 
-function applyBrackets(
-  builder: WhereExpressionBuilder,
-  alias: string,
-  escape: Escape,
-  expression: ValidatedExpression,
-  combinator: Combinator,
-): void {
-  const brackets = new Brackets((inner) => applyExpression(inner, alias, escape, expression));
+function applyBrackets(builder: WhereExpressionBuilder, expression: ValidatedExpression, combinator: Combinator): void {
+  const brackets = new Brackets((inner) => applyExpression(inner, expression));
 
   if (combinator === 'and') {
     builder.andWhere(brackets);
@@ -75,14 +61,8 @@ function applyBrackets(
   }
 }
 
-function applyNot(
-  builder: WhereExpressionBuilder,
-  alias: string,
-  escape: Escape,
-  expression: ValidatedExpression,
-  combinator: Combinator,
-): void {
-  const brackets = new NotBrackets((inner) => applyExpression(inner, alias, escape, expression));
+function applyNot(builder: WhereExpressionBuilder, expression: ValidatedExpression, combinator: Combinator): void {
+  const brackets = new NotBrackets((inner) => applyExpression(inner, expression));
 
   if (combinator === 'and') {
     builder.andWhere(brackets);
@@ -91,16 +71,10 @@ function applyNot(
   }
 }
 
-function applyPredicate(
-  builder: WhereExpressionBuilder,
-  alias: string,
-  escape: Escape,
-  predicate: ValidatedPredicate,
-  combinator: Combinator,
-): void {
+function applyPredicate(builder: WhereExpressionBuilder, predicate: ValidatedPredicate, combinator: Combinator): void {
   if (predicate.fields.length === 1) {
     for (const field of predicate.fields) {
-      applyFieldCondition(builder, alias, escape, field, predicate.caseSensitive, combinator);
+      applyFieldCondition(builder, field, predicate.caseSensitive, combinator);
     }
 
     return;
@@ -110,7 +84,7 @@ function applyPredicate(
   // (only "=" is supported for multi-field attributes, so this is always an OR).
   const brackets = new Brackets((inner) => {
     for (const field of predicate.fields) {
-      applyFieldCondition(inner, alias, escape, field, predicate.caseSensitive, 'or');
+      applyFieldCondition(inner, field, predicate.caseSensitive, 'or');
     }
   });
 
@@ -121,14 +95,7 @@ function applyPredicate(
   }
 }
 
-function applyFieldCondition(
-  builder: WhereExpressionBuilder,
-  alias: string,
-  escape: Escape,
-  field: ValidatedField,
-  caseSensitive: boolean,
-  combinator: Combinator,
-): void {
+function applyFieldCondition(builder: WhereExpressionBuilder, field: ValidatedField, caseSensitive: boolean, combinator: Combinator): void {
   // A value that didn't fit its (possibly field-overridden) type — see AttributeFieldType
   // — never errors; it just can never match, so the field contributes an unconditional
   // false to the OR/AND rather than a real comparison.
@@ -144,12 +111,11 @@ function applyFieldCondition(
 
   const parameterName = nextParameterName();
   const escapeClause = field.operator === 'LIKE' ? " ESCAPE '\\'" : '';
-  // "raw" (see AttributeRawField) is inserted verbatim — no escaping, no alias
-  // qualification. A plain field name is escaped and alias-qualified as usual.
-  const columnExpression = 'raw' in field ? field.raw : `${escape(alias)}.${escape(field.field)}`;
-  // The value is already lowercased by the validator when caseSensitive is false,
-  // so only the column needs LOWER() here.
-  const column = caseSensitive ? columnExpression : `LOWER(${columnExpression})`;
+  // "field" (see AttributeField) is inserted into the SQL verbatim — no escaping, no
+  // alias qualification. Quoting/qualification, if needed, is the caller's responsibility.
+  // The value is already lowercased by the validator when caseSensitive is false, so
+  // only the column needs LOWER() here.
+  const column = caseSensitive ? field.field : `LOWER(${field.field})`;
   const condition = `${column} ${field.operator} :${parameterName}${escapeClause}`;
   const parameters = { [parameterName]: field.value };
 

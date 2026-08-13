@@ -28,7 +28,7 @@ const defaultFieldAttributes: AttributeMap = {
 // "id" is an integer column — casting it to TEXT lets it be searched as part of a
 // string-typed multi-field group without the database rejecting a non-numeric value.
 const rawFieldAttributes: AttributeMap = {
-  search: { type: 'string', fields: ['name', { raw: 'CAST(id AS TEXT)' }] },
+  search: { type: 'string', fields: ['name', 'CAST(id AS TEXT)'] },
 };
 
 const typedFieldAttributes: AttributeMap = {
@@ -116,7 +116,9 @@ describe('search: end-to-end result sets', () => {
 
     const queryBuilder = search({ repository: ProductRepository, query: 'status:online', attributes, alias: 'p' });
 
-    expect(queryBuilder.getSql()).toContain('"p"."status"');
+    // Fields are inserted verbatim now (no auto alias-qualification), so a custom
+    // `alias` only affects the FROM/SELECT clauses TypeORM generates on its own.
+    expect(queryBuilder.getSql()).toContain('FROM "products" "p"');
 
     const products = await queryBuilder.getMany();
 
