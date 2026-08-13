@@ -243,6 +243,18 @@ describe('validate: multi-field attributes', () => {
       expect((error as SearchCopError).code).toBe('INVALID_OPERATOR');
     }
   });
+
+  it('allows ordering operators when "fields" has only a single element, unlike a real multi-field attribute', () => {
+    const attributesWithSingleField: AttributeMap = {
+      renamed: { type: 'number', fields: ['price'] },
+    };
+
+    for (const operator of ['>', '>=', '<', '<=']) {
+      expect(validate({ expression: parse(`renamed:${operator}100`), attributes: attributesWithSingleField })).toMatchObject({
+        fields: [{ field: 'price', operator, value: 100 }],
+      });
+    }
+  });
 });
 
 describe('validate: field-level type overrides', () => {

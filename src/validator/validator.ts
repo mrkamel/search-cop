@@ -59,7 +59,7 @@ function validatePredicate(predicate: PredicateExpression, attributes: Attribute
     );
   }
 
-  if (attribute.fields?.length && predicate.operator !== '=') {
+  if (attribute.fields?.length && attribute.fields.length > 1 && predicate.operator !== '=') {
     throw new SearchCopError(
       'INVALID_OPERATOR',
       `Multi-field attributes only support "=", got "${predicate.operator}" for attribute "${predicate.field}".`,
