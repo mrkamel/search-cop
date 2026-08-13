@@ -1,5 +1,6 @@
+import { Brackets } from 'typeorm';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { search } from '../src/index.js';
+import { search, searchCondition } from '../src/index.js';
 import { SearchCopError } from '../src/errors/errors.js';
 import { AppDataSource } from './support/AppDataSource.js';
 import { ProductEntity } from './support/ProductEntity.js';
@@ -361,6 +362,29 @@ describe('search: negation (NOT)', () => {
     const match = await createProduct({});
 
     const products = await search({ repository: ProductRepository, query: 'NOT id:foo', attributes: uuidAttributes }).getMany();
+
+    expect(products.map((product) => product.name)).toEqual([match.name]);
+  });
+});
+
+describe('searchCondition: merging into a caller-built queryBuilder', () => {
+  it('returns a Brackets instance, usable directly with andWhere/orWhere', () => {
+    const brackets = searchCondition({ query: 'status:online', attributes });
+
+    expect(brackets).toBeInstanceOf(Brackets);
+  });
+
+  it('composes with conditions already present on the queryBuilder, instead of replacing them', async () => {
+    const match = await createProduct({ status: 'online', price: 150 });
+
+    await createProduct({ status: 'online', price: 50 });
+    await createProduct({ status: 'offline', price: 150 });
+
+    const queryBuilder = ProductRepository.createQueryBuilder('product').andWhere('product.status = :status', { status: 'online' });
+
+    queryBuilder.andWhere(searchCondition({ query: 'price:>100', attributes }));
+
+    const products = await queryBuilder.getMany();
 
     expect(products.map((product) => product.name)).toEqual([match.name]);
   });

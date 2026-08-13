@@ -1,7 +1,7 @@
-import type { ObjectLiteral, Repository, SelectQueryBuilder } from 'typeorm';
+import type { Brackets, ObjectLiteral, Repository, SelectQueryBuilder } from 'typeorm';
 import { parse } from './parser/parser.js';
 import { validate } from './validator/validator.js';
-import { compile } from './compiler/typeorm.js';
+import { compile, compileCondition } from './compiler/typeorm.js';
 import type { AttributeMap } from './attributes/types.js';
 
 export { DEFAULT_FIELD } from './parser/parser.js';
@@ -19,6 +19,28 @@ export function search<Entity extends ObjectLiteral>(options: SearchOptions<Enti
   const validated = validate({ expression, attributes: options.attributes });
 
   return compile({ repository: options.repository, expression: validated, alias: options.alias });
+}
+
+export interface SearchConditionOptions {
+  query: string;
+  attributes: AttributeMap;
+}
+
+/**
+ * Compiles a query to a standalone `Brackets` where-clause fragment instead of a full
+ * query, to merge into a queryBuilder you've already built yourself — with your own
+ * joins, alias, and other `where` conditions already in place:
+ *
+ * ```ts
+ * const queryBuilder = repository.createQueryBuilder('product').leftJoinAndSelect('product.author', 'author');
+ * queryBuilder.andWhere(searchCondition({ query: 'author.name:joe', attributes }));
+ * ```
+ */
+export function searchCondition(options: SearchConditionOptions): Brackets {
+  const expression = parse(options.query);
+  const validated = validate({ expression, attributes: options.attributes });
+
+  return compileCondition(validated);
 }
 
 export { SearchCopError } from './errors/errors.js';

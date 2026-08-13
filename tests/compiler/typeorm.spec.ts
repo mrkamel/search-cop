@@ -1,7 +1,8 @@
+import { Brackets } from 'typeorm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { parse } from '../../src/parser/parser.js';
 import { validate } from '../../src/validator/validator.js';
-import { compile } from '../../src/compiler/typeorm.js';
+import { compile, compileCondition } from '../../src/compiler/typeorm.js';
 import { AppDataSource } from '../support/AppDataSource.js';
 import type { AttributeMap } from '../../src/attributes/types.js';
 import { ProductRepository } from '../support/ProductRepository.js';
@@ -308,5 +309,39 @@ describe('compile: negation (NOT)', () => {
 
     expect(sql).toContain('NOT(1 = 0)');
     expect(params).toEqual([]);
+  });
+});
+
+describe('compileCondition', () => {
+  function compileConditionQuery(query: string, attributeMap: AttributeMap = attributes): Brackets {
+    const validated = validate({ expression: parse(query), attributes: attributeMap });
+
+    return compileCondition(validated);
+  }
+
+  it('returns a Brackets fragment, not a full queryBuilder', () => {
+    expect(compileConditionQuery('status:online')).toBeInstanceOf(Brackets);
+  });
+
+  it('applies correctly when merged via andWhere() onto a queryBuilder built independently', () => {
+    const queryBuilder = ProductRepository.createQueryBuilder('products');
+
+    queryBuilder.andWhere(compileConditionQuery('status:online AND price:>100'));
+
+    const [sql, params] = queryBuilder.getQueryAndParameters();
+
+    expect(sql).toMatch(/status = \? AND .*price > 100/);
+    expect(params).toEqual(['online']);
+  });
+
+  it('composes with conditions already present on the queryBuilder, instead of replacing them', () => {
+    const queryBuilder = ProductRepository.createQueryBuilder('products').andWhere('products.status = :status', { status: 'online' });
+
+    queryBuilder.andWhere(compileConditionQuery('price:>100'));
+
+    const [sql, params] = queryBuilder.getQueryAndParameters();
+
+    expect(sql).toMatch(/"products"\."status" = \?.*AND.*price > 100/);
+    expect(params).toEqual(['online']);
   });
 });

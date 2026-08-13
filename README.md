@@ -26,6 +26,41 @@ specific alias (e.g. to match an alias already used elsewhere in a larger query)
 affects the `FROM`/`SELECT` clauses TypeORM generates on its own; it has no effect on the
 `WHERE` clause, since [`fields`](#multi-field-attributes) are always inserted verbatim.
 
+## Combining with your own queryBuilder
+
+`search()` is a convenience for the common case: give it a `repository` and get back a
+ready-to-go `SelectQueryBuilder`. If you've already built your own queryBuilder — with
+joins, a specific alias, or other `where` conditions already in place — use `searchCondition()`
+instead. It compiles a query to a standalone [`Brackets`][typeorm-brackets] fragment rather
+than a full query, which you merge in yourself via `andWhere()`/`orWhere()`:
+
+```ts
+import { searchCondition } from 'search-cop';
+
+const queryBuilder = ProductRepository.createQueryBuilder('product').leftJoinAndSelect('product.author', 'author');
+
+queryBuilder.andWhere(searchCondition({
+  query: 'author.name:joe',
+  attributes: {
+    // A join means there's now more than one table, so this field is qualified —
+    // exactly as with any other field, search-cop inserts it verbatim (see below).
+    author: { type: 'string', fields: ['author.name'] },
+  },
+}));
+
+const products = await queryBuilder.getMany();
+```
+
+`Brackets` (and its negated counterpart `NotBrackets`, used internally for `NOT`) is
+TypeORM's own portable where-clause primitive — its callback isn't evaluated until it's
+handed to `andWhere()`/`orWhere()`/`where()` on a real queryBuilder, so `searchCondition()`
+needs no `repository` or queryBuilder of its own, and doesn't touch or know about the rest
+of your query. Using `andWhere()` (rather than `where()`) to merge it in means any
+conditions you already added stay in place — search-cop only ever adds to your `WHERE`
+clause, never replaces it.
+
+[typeorm-brackets]: https://typeorm.io/select-query-builder#using-brackets
+
 ## Attributes
 
 Only attributes declared in `attributes` may be queried. Supported types:

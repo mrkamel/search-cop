@@ -22,9 +22,21 @@ export function compile<Entity extends ObjectLiteral>(options: CompileOptions<En
   const { repository, expression, alias = repository.metadata.tableName } = options;
   const queryBuilder = repository.createQueryBuilder(alias);
 
-  queryBuilder.where(new Brackets((builder) => applyExpression(builder, expression)));
+  queryBuilder.andWhere(compileCondition(expression));
 
   return queryBuilder;
+}
+
+/**
+ * Compiles a validated expression to a standalone `Brackets` fragment instead of a full
+ * query. `Brackets`/`NotBrackets` are TypeORM's own portable where-clause primitive — the
+ * callback isn't evaluated until it's handed to `.andWhere()`/`.orWhere()` on a real
+ * `WhereExpressionBuilder`, so this needs no repository or queryBuilder of its own. Use
+ * this to merge search-cop's conditions into a queryBuilder you've already built yourself
+ * (with your own joins, aliases, and other `where` conditions already in place).
+ */
+export function compileCondition(expression: ValidatedExpression): Brackets {
+  return new Brackets((builder) => applyExpression(builder, expression));
 }
 
 function applyExpression(builder: WhereExpressionBuilder, expression: ValidatedExpression): void {
