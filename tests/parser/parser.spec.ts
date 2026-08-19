@@ -14,7 +14,7 @@ function stripPosition(expression: unknown): unknown {
 
 describe('parse: operators', () => {
   it('treats ":" as equality', () => {
-    expect(stripPosition(parse('status:online'))).toEqual(predicate('status', '=', 'online'));
+    expect(stripPosition(parse('status:online'))).toEqual(predicate('status', ':', 'online'));
   });
 
   it('parses explicit equality', () => {
@@ -42,50 +42,50 @@ describe('parse: operators', () => {
   });
 
   it('does not recognize "!=" as an operator: "!" is treated as a plain value character', () => {
-    expect(stripPosition(parse('status:!=offline'))).toEqual(predicate('status', '=', '!=offline'));
+    expect(stripPosition(parse('status:!=offline'))).toEqual(predicate('status', ':', '!=offline'));
   });
 
   it('parses "*" as a plain value character (wildcard interpretation happens during validation)', () => {
-    expect(stripPosition(parse('name:Pet*'))).toEqual(predicate('name', '=', 'Pet*'));
-    expect(stripPosition(parse('name:*fred'))).toEqual(predicate('name', '=', '*fred'));
+    expect(stripPosition(parse('name:Pet*'))).toEqual(predicate('name', ':', 'Pet*'));
+    expect(stripPosition(parse('name:*fred'))).toEqual(predicate('name', ':', '*fred'));
   });
 });
 
 describe('parse: quoted values', () => {
   it('parses a quoted value containing whitespace', () => {
-    expect(stripPosition(parse('first_name:"foo bar"'))).toEqual(predicate('first_name', '=', 'foo bar'));
+    expect(stripPosition(parse('first_name:"foo bar"'))).toEqual(predicate('first_name', ':', 'foo bar'));
   });
 
   it('parses a quoted value containing parentheses', () => {
-    expect(stripPosition(parse('name:"(foo)"'))).toEqual(predicate('name', '=', '(foo)'));
+    expect(stripPosition(parse('name:"(foo)"'))).toEqual(predicate('name', ':', '(foo)'));
   });
 
   it('parses an empty quoted value', () => {
-    expect(stripPosition(parse('name:""'))).toEqual(predicate('name', '=', ''));
+    expect(stripPosition(parse('name:""'))).toEqual(predicate('name', ':', ''));
   });
 
   it('unescapes \\" to a literal quote', () => {
-    expect(stripPosition(parse('name:"foo \\"bar\\" baz"'))).toEqual(predicate('name', '=', 'foo "bar" baz'));
+    expect(stripPosition(parse('name:"foo \\"bar\\" baz"'))).toEqual(predicate('name', ':', 'foo "bar" baz'));
   });
 
   it('unescapes \\\\ to a literal backslash', () => {
-    expect(stripPosition(parse('name:"back\\\\slash"'))).toEqual(predicate('name', '=', 'back\\slash'));
+    expect(stripPosition(parse('name:"back\\\\slash"'))).toEqual(predicate('name', ':', 'back\\slash'));
   });
 
   it('combines quoted predicates with AND/OR, including implicit AND', () => {
     expect(stripPosition(parse('is_active:false OR first_name:"foo bar"'))).toEqual({
       type: 'or',
-      children: [predicate('is_active', '=', 'false'), predicate('first_name', '=', 'foo bar')],
+      children: [predicate('is_active', ':', 'false'), predicate('first_name', ':', 'foo bar')],
     });
 
     expect(stripPosition(parse('first_name:"foo bar" status:online'))).toEqual({
       type: 'and',
-      children: [predicate('first_name', '=', 'foo bar'), predicate('status', '=', 'online')],
+      children: [predicate('first_name', ':', 'foo bar'), predicate('status', ':', 'online')],
     });
   });
 
   it('falls back to an unquoted value when the closing quote is missing', () => {
-    expect(stripPosition(parse('name:"unterminated'))).toEqual(predicate('name', '=', '"unterminated'));
+    expect(stripPosition(parse('name:"unterminated'))).toEqual(predicate('name', ':', '"unterminated'));
   });
 });
 
@@ -93,21 +93,21 @@ describe('parse: boolean expressions', () => {
   it('parses AND', () => {
     expect(stripPosition(parse('status:online AND price:>100'))).toEqual({
       type: 'and',
-      children: [predicate('status', '=', 'online'), predicate('price', '>', '100')],
+      children: [predicate('status', ':', 'online'), predicate('price', '>', '100')],
     });
   });
 
   it('treats juxtaposition (no explicit operator) as implicit AND', () => {
     expect(stripPosition(parse('status:online price:>100'))).toEqual({
       type: 'and',
-      children: [predicate('status', '=', 'online'), predicate('price', '>', '100')],
+      children: [predicate('status', ':', 'online'), predicate('price', '>', '100')],
     });
   });
 
   it('mixes implicit and explicit AND', () => {
     expect(stripPosition(parse('status:a status:b AND status:c'))).toEqual({
       type: 'and',
-      children: [predicate('status', '=', 'a'), predicate('status', '=', 'b'), predicate('status', '=', 'c')],
+      children: [predicate('status', ':', 'a'), predicate('status', ':', 'b'), predicate('status', ':', 'c')],
     });
   });
 
@@ -117,9 +117,9 @@ describe('parse: boolean expressions', () => {
       children: [
         {
           type: 'and',
-          children: [predicate('status', '=', 'a'), predicate('status', '=', 'b')],
+          children: [predicate('status', ':', 'a'), predicate('status', ':', 'b')],
         },
-        predicate('status', '=', 'c'),
+        predicate('status', ':', 'c'),
       ],
     });
   });
@@ -127,7 +127,7 @@ describe('parse: boolean expressions', () => {
   it('parses OR', () => {
     expect(stripPosition(parse('status:online OR status:pending'))).toEqual({
       type: 'or',
-      children: [predicate('status', '=', 'online'), predicate('status', '=', 'pending')],
+      children: [predicate('status', ':', 'online'), predicate('status', ':', 'pending')],
     });
   });
 
@@ -135,10 +135,10 @@ describe('parse: boolean expressions', () => {
     expect(stripPosition(parse('status:a OR status:b AND status:c'))).toEqual({
       type: 'or',
       children: [
-        predicate('status', '=', 'a'),
+        predicate('status', ':', 'a'),
         {
           type: 'and',
-          children: [predicate('status', '=', 'b'), predicate('status', '=', 'c')],
+          children: [predicate('status', ':', 'b'), predicate('status', ':', 'c')],
         },
       ],
     });
@@ -150,9 +150,9 @@ describe('parse: boolean expressions', () => {
       children: [
         {
           type: 'or',
-          children: [predicate('status', '=', 'a'), predicate('status', '=', 'b')],
+          children: [predicate('status', ':', 'a'), predicate('status', ':', 'b')],
         },
-        predicate('status', '=', 'c'),
+        predicate('status', ':', 'c'),
       ],
     });
   });
@@ -161,10 +161,10 @@ describe('parse: boolean expressions', () => {
     expect(stripPosition(parse('status:a AND (status:b OR status:c)'))).toEqual({
       type: 'and',
       children: [
-        predicate('status', '=', 'a'),
+        predicate('status', ':', 'a'),
         {
           type: 'or',
-          children: [predicate('status', '=', 'b'), predicate('status', '=', 'c')],
+          children: [predicate('status', ':', 'b'), predicate('status', ':', 'c')],
         },
       ],
     });
@@ -173,34 +173,34 @@ describe('parse: boolean expressions', () => {
   it('never treats lowercase "and"/"or" as connectors (case-sensitive grammar) — bare words, they are literal "_all" terms', () => {
     expect(stripPosition(parse('status:a and status:b'))).toEqual({
       type: 'and',
-      children: [predicate('status', '=', 'a'), predicate('_all', '=', 'and'), predicate('status', '=', 'b')],
+      children: [predicate('status', ':', 'a'), predicate('_all', ':', 'and'), predicate('status', ':', 'b')],
     });
 
     expect(stripPosition(parse('status:a or status:b'))).toEqual({
       type: 'and',
-      children: [predicate('status', '=', 'a'), predicate('_all', '=', 'or'), predicate('status', '=', 'b')],
+      children: [predicate('status', ':', 'a'), predicate('_all', ':', 'or'), predicate('status', ':', 'b')],
     });
   });
 });
 
 describe('parse: negation (NOT)', () => {
   it('negates a predicate', () => {
-    expect(stripPosition(parse('NOT status:online'))).toEqual({ type: 'not', child: predicate('status', '=', 'online') });
+    expect(stripPosition(parse('NOT status:online'))).toEqual({ type: 'not', child: predicate('status', ':', 'online') });
   });
 
   it('negates a predicate with no space before "("', () => {
-    expect(stripPosition(parse('NOT(status:online)'))).toEqual({ type: 'not', child: predicate('status', '=', 'online') });
+    expect(stripPosition(parse('NOT(status:online)'))).toEqual({ type: 'not', child: predicate('status', ':', 'online') });
   });
 
   it('does not split "NOT" from an immediately-following field name', () => {
-    expect(stripPosition(parse('NOTstatus:online'))).toEqual(predicate('NOTstatus', '=', 'online'));
-    expect(stripPosition(parse('NOTABLE:foo'))).toEqual(predicate('NOTABLE', '=', 'foo'));
+    expect(stripPosition(parse('NOTstatus:online'))).toEqual(predicate('NOTstatus', ':', 'online'));
+    expect(stripPosition(parse('NOTABLE:foo'))).toEqual(predicate('NOTABLE', ':', 'foo'));
   });
 
   it('binds tighter than AND — negates only the next term, not the rest of the expression', () => {
     expect(stripPosition(parse('NOT status:online AND price:>100'))).toEqual({
       type: 'and',
-      children: [{ type: 'not', child: predicate('status', '=', 'online') }, predicate('price', '>', '100')],
+      children: [{ type: 'not', child: predicate('status', ':', 'online') }, predicate('price', '>', '100')],
     });
   });
 
@@ -209,7 +209,7 @@ describe('parse: negation (NOT)', () => {
       type: 'not',
       child: {
         type: 'or',
-        children: [predicate('status', '=', 'online'), predicate('status', '=', 'pending')],
+        children: [predicate('status', ':', 'online'), predicate('status', ':', 'pending')],
       },
     });
   });
@@ -217,19 +217,19 @@ describe('parse: negation (NOT)', () => {
   it('negates just the next bare term amid implicit AND, not the whole phrase', () => {
     expect(stripPosition(parse('red NOT blue'))).toEqual({
       type: 'and',
-      children: [predicate('_all', '=', 'red'), { type: 'not', child: predicate('_all', '=', 'blue') }],
+      children: [predicate('_all', ':', 'red'), { type: 'not', child: predicate('_all', ':', 'blue') }],
     });
 
     expect(stripPosition(parse('NOT red blue'))).toEqual({
       type: 'and',
-      children: [{ type: 'not', child: predicate('_all', '=', 'red') }, predicate('_all', '=', 'blue')],
+      children: [{ type: 'not', child: predicate('_all', ':', 'red') }, predicate('_all', ':', 'blue')],
     });
   });
 
   it('supports double negation', () => {
     expect(stripPosition(parse('NOT NOT status:online'))).toEqual({
       type: 'not',
-      child: { type: 'not', child: predicate('status', '=', 'online') },
+      child: { type: 'not', child: predicate('status', ':', 'online') },
     });
   });
 
@@ -239,38 +239,38 @@ describe('parse: negation (NOT)', () => {
   });
 
   it('allows searching for the literal word "NOT" via quoting', () => {
-    expect(stripPosition(parse('"NOT"'))).toEqual(predicate('_all', '=', 'NOT'));
+    expect(stripPosition(parse('"NOT"'))).toEqual(predicate('_all', ':', 'NOT'));
   });
 });
 
 describe('parse: default field ("_all")', () => {
   it('parses a bare value with no "field:" prefix against "_all"', () => {
-    expect(stripPosition(parse('Pet'))).toEqual(predicate('_all', '=', 'Pet'));
-    expect(stripPosition(parse('Pet*'))).toEqual(predicate('_all', '=', 'Pet*'));
+    expect(stripPosition(parse('Pet'))).toEqual(predicate('_all', ':', 'Pet'));
+    expect(stripPosition(parse('Pet*'))).toEqual(predicate('_all', ':', 'Pet*'));
   });
 
   it('parses a bare quoted value against "_all"', () => {
-    expect(stripPosition(parse('"foo bar"'))).toEqual(predicate('_all', '=', 'foo bar'));
+    expect(stripPosition(parse('"foo bar"'))).toEqual(predicate('_all', ':', 'foo bar'));
   });
 
   it('combines multiple bare terms with implicit AND (free-text search)', () => {
     expect(stripPosition(parse('red shoes'))).toEqual({
       type: 'and',
-      children: [predicate('_all', '=', 'red'), predicate('_all', '=', 'shoes')],
+      children: [predicate('_all', ':', 'red'), predicate('_all', ':', 'shoes')],
     });
   });
 
   it('mixes bare terms with explicit field:value predicates', () => {
     expect(stripPosition(parse('red status:online'))).toEqual({
       type: 'and',
-      children: [predicate('_all', '=', 'red'), predicate('status', '=', 'online')],
+      children: [predicate('_all', ':', 'red'), predicate('status', ':', 'online')],
     });
   });
 
   it('still recognizes "OR" between two bare terms as the keyword, not a literal term', () => {
     expect(stripPosition(parse('red OR blue'))).toEqual({
       type: 'or',
-      children: [predicate('_all', '=', 'red'), predicate('_all', '=', 'blue')],
+      children: [predicate('_all', ':', 'red'), predicate('_all', ':', 'blue')],
     });
   });
 
@@ -281,13 +281,13 @@ describe('parse: default field ("_all")', () => {
   });
 
   it('allows searching for the literal word "AND"/"OR" via quoting', () => {
-    expect(stripPosition(parse('"AND"'))).toEqual(predicate('_all', '=', 'AND'));
-    expect(stripPosition(parse('"OR"'))).toEqual(predicate('_all', '=', 'OR'));
+    expect(stripPosition(parse('"AND"'))).toEqual(predicate('_all', ':', 'AND'));
+    expect(stripPosition(parse('"OR"'))).toEqual(predicate('_all', ':', 'OR'));
   });
 
   it('does not treat a word merely containing "AND"/"OR" as reserved', () => {
-    expect(stripPosition(parse('ANDROID'))).toEqual(predicate('_all', '=', 'ANDROID'));
-    expect(stripPosition(parse('FOREST'))).toEqual(predicate('_all', '=', 'FOREST'));
+    expect(stripPosition(parse('ANDROID'))).toEqual(predicate('_all', ':', 'ANDROID'));
+    expect(stripPosition(parse('FOREST'))).toEqual(predicate('_all', ':', 'FOREST'));
   });
 });
 

@@ -1,4 +1,7 @@
-export type Operator = '=' | '>' | '>=' | '<' | '<=';
+// ":" is the bare-colon shorthand ("field:value", and bare "_all" terms) — semantically
+// equality, exactly like "=", but tracked separately so the validator can tell whether the
+// user wrote an explicit operator (needed for the "wildcards" auto-wildcard option).
+export type Operator = ':' | '=' | '>' | '>=' | '<' | '<=';
 
 export interface PredicateExpression {
   type: 'predicate';

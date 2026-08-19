@@ -81,8 +81,10 @@ Only attributes declared in `attributes` may be queried. Supported types:
 `null` attributes require `isNull: string[]` and `isNotNull: string[]` — see
 [Null checks](#null-checks).
 
-`string` attributes accept an optional `caseSensitive: boolean` (default `true`) — see
-[Case sensitivity](#case-sensitivity).
+`string` attributes accept an optional `caseSensitive: boolean | 'lower' | 'upper'` (default
+`true`) — see [Case sensitivity](#case-sensitivity) — and optional `wildcards`/
+`leftWildcard`/`rightWildcard: boolean` (all default `false`) — see
+[Implicit wildcards](#implicit-wildcards).
 
 `uuid` values are validated against RFC 9562 (version 1-8 and variant nibbles, plus the nil
 and max UUIDs) using the [`uuid`](https://www.npmjs.com/package/uuid) package, and are
@@ -108,6 +110,10 @@ price:<100
 price:<=100
 createdAt:>=2026-01-01
 ```
+
+`status:online` and `status:=online` compile identically. The only place they're told
+apart is the `wildcards` option (see [Implicit wildcards](#implicit-wildcards)), which
+only kicks in for the bare `:` shorthand — an explicit `=` always opts out of it.
 
 Combine predicates with `AND` / `OR` (case-sensitive — lowercase `and`/`or` are rejected)
 and parentheses. `AND` binds tighter than `OR`:
@@ -169,6 +175,38 @@ By default, case-sensitivity of the match depends on the database's `LIKE` colla
 Postgres' `LIKE` is case-sensitive; SQLite's is case-insensitive for ASCII by default) — see
 [Case sensitivity](#case-sensitivity) for a portable, explicit alternative.
 
+### Implicit wildcards
+
+Set `wildcards: true` on a `string` attribute to make the bare `:` shorthand a contains
+match by default, without writing `*` yourself:
+
+```ts
+attributes: {
+  name: { type: 'string', wildcards: true },
+}
+```
+
+```text
+name:pet                                    // contains "pet" — same as name:*pet*
+name:pet*                                   // explicit "*" is left exactly as written
+name:=pet                                   // explicit "=" always stays an exact match
+```
+
+`wildcards: true` is shorthand for setting both `leftWildcard` and `rightWildcard`, which
+you can also set independently for a one-sided match:
+
+```ts
+attributes: {
+  endsWithName: { type: 'string', leftWildcard: true },     // endsWithName:pet   -> *pet  (ends with)
+  startsWithName: { type: 'string', rightWildcard: true },  // startsWithName:pet -> pet*  (starts with)
+}
+```
+
+Precedence, in order: an explicit `*` anywhere in the value is always respected as-is (no
+double-wrapping); otherwise an explicit `=` is always an exact match; only a bare `:` with
+neither falls back to the implicit wrap. This also applies to a bare term against `_all`
+(see [Default field](#default-field)), since bare terms are `:` too.
+
 ### Case sensitivity
 
 By default, `string` attributes are matched case-sensitively (subject to the database's own
@@ -184,6 +222,22 @@ attributes: {
 This compiles to `LOWER(column) <op> LOWER(value)`, using the standard SQL `LOWER()`
 function so behavior is identical across Postgres, MySQL, and SQLite — rather than a
 database-specific mechanism (e.g. Postgres' `ILIKE` or `citext`, or a `COLLATE` clause).
+
+Set `caseSensitive: 'upper'` instead to fold through `UPPER()` rather than `LOWER()` — for
+example, to match an existing functional index built on `UPPER(column)`:
+
+```ts
+attributes: {
+  name: { type: 'string', caseSensitive: 'upper' },
+}
+```
+
+```text
+name:Fred     // UPPER(name) = 'FRED'
+```
+
+`caseSensitive: 'lower'` is also accepted, and behaves exactly like `false` — it's just the
+explicit spelling, useful if you'd rather not read `false` as "off".
 
 ### Multi-field attributes
 

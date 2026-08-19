@@ -113,7 +113,7 @@ function applyPredicate(
 ): void {
   if (predicate.fields.length === 1) {
     for (const field of predicate.fields) {
-      applyFieldCondition({ builder, field, caseSensitive: predicate.caseSensitive, combinator });
+      applyFieldCondition({ builder, field, combinator });
     }
 
     return;
@@ -123,7 +123,7 @@ function applyPredicate(
   // (only "=" is supported for multi-field attributes, so this is always an OR).
   const brackets = new Brackets((inner) => {
     for (const field of predicate.fields) {
-      applyFieldCondition({ builder: inner, field, caseSensitive: predicate.caseSensitive, combinator: 'or' });
+      applyFieldCondition({ builder: inner, field, combinator: 'or' });
     }
   });
 
@@ -131,8 +131,8 @@ function applyPredicate(
 }
 
 function applyFieldCondition(
-  { builder, field, caseSensitive, combinator }:
-  { builder: WhereExpressionBuilder, field: ValidatedField, caseSensitive: boolean, combinator: Combinator }
+  { builder, field, combinator }:
+  { builder: WhereExpressionBuilder, field: ValidatedField, combinator: Combinator }
 ): void {
   // A value that didn't fit its (possibly field-overridden) type — see AttributeFieldType
   // — never errors; it just can never match, so the field contributes an unconditional
@@ -142,17 +142,26 @@ function applyFieldCondition(
     return;
   }
 
-  // "field" (see AttributeField) is inserted into the SQL verbatim — no escaping, no
-  // alias qualification. Quoting/qualification, if needed, is the caller's responsibility.
-  // The value is already lowercased by the validator when caseSensitive is false, so
-  // only the column needs LOWER() here.
-  const column = caseSensitive ? field.field : `LOWER(${field.field})`;
-
-  // "null" attributes: an existence check, not a value comparison — no parameter to bind.
+  // "null" attributes: an existence check, not a value comparison — no case folding, no
+  // parameter to bind.
   if (!('value' in field)) {
-    applyWhere({ builder, combinator, condition: `${column} ${field.operator}` });
+    applyWhere({ builder, combinator, condition: `${field.field} ${field.operator}` });
     return;
   }
+
+  // "field" (see AttributeField) is inserted into the SQL verbatim — no escaping, no
+  // alias qualification. Quoting/qualification, if needed, is the caller's responsibility.
+  // "caseSensitive" is this field's own — see ValidatedField — since a field-level type
+  // override can declare a different one than the outer attribute. The value is already
+  // case-folded by the validator to match, so only the column needs folding here —
+  // LOWER() for "false"/"lower" (the same fold function, just two spellings for backward
+  // compatibility), UPPER() for "upper".
+  const column = (() => {
+    if (field.caseSensitive === true) return field.field;
+    if (field.caseSensitive === 'upper') return `UPPER(${field.field})`;
+
+    return `LOWER(${field.field})`;
+  })();
 
   const parameterName = nextParameterName();
   const escapeClause = field.operator === 'LIKE' ? " ESCAPE '\\'" : '';

@@ -5,15 +5,30 @@ import type { ValidatedExpression, ValidatedField, ValidatedOperator, ValidatedP
 import { SearchCopError } from '../errors/errors.js';
 
 const OPERATORS_BY_TYPE: Record<AttributeDefinition['type'], Operator[]> = {
-  string: ['=', '>', '>=', '<', '<='],
-  number: ['=', '>', '>=', '<', '<='],
-  boolean: ['='],
-  date: ['=', '>', '>=', '<', '<='],
-  datetime: ['=', '>', '>=', '<', '<='],
-  enum: ['='],
-  uuid: ['='],
-  null: ['='],
+  string: [':', '=', '>', '>=', '<', '<='],
+  number: [':', '=', '>', '>=', '<', '<='],
+  boolean: [':', '='],
+  date: [':', '=', '>', '>=', '<', '<='],
+  datetime: [':', '=', '>', '>=', '<', '<='],
+  enum: [':', '='],
+  uuid: [':', '='],
+  null: [':', '='],
 };
+
+// ":" (bare-colon) and "=" (explicit) are both equality — used wherever code cares about
+// "is this an equality predicate", as opposed to distinguishing the two forms themselves
+// (only the "wildcards" auto-wildcard option cares about that distinction).
+function isEqualityOperator(operator: Operator): boolean {
+  return operator === ':' || operator === '=';
+}
+
+// "false" is shorthand for "'lower'" — both mean the same fold function, "false" is just
+// the pre-existing boolean spelling kept for backward compatibility.
+function foldCase(value: string, caseSensitive: boolean | 'lower' | 'upper'): string {
+  if (caseSensitive === true) return value;
+
+  return caseSensitive === 'upper' ? value.toUpperCase() : value.toLowerCase();
+}
 
 /**
  * Date-only values (and datetime values without an explicit offset) are interpreted as UTC,
@@ -60,7 +75,7 @@ function validatePredicate(predicate: PredicateExpression, attributes: Attribute
     );
   }
 
-  if (attribute.fields?.length && attribute.fields.length > 1 && predicate.operator !== '=') {
+  if (attribute.fields?.length && attribute.fields.length > 1 && !isEqualityOperator(predicate.operator)) {
     throw new SearchCopError(
       'INVALID_OPERATOR',
       `Multi-field attributes only support "=", got "${predicate.operator}" for attribute "${predicate.field}".`,
@@ -68,9 +83,16 @@ function validatePredicate(predicate: PredicateExpression, attributes: Attribute
     );
   }
 
-  const isWildcard = attribute.type === 'string' && predicate.value.includes('*');
+  const entries = attribute.fields?.length ? attribute.fields : [predicate.field];
 
-  if (isWildcard && predicate.operator !== '=') {
+  // A "*" is only ever wildcard syntax for a "string"-typed field — otherwise it's just a
+  // literal character (see resolveField). A field-level type override has its own
+  // effective type, independent of the outer attribute, so this checks every entry rather
+  // than just the outer attribute's own type.
+  const hasLiteralWildcard = predicate.value.includes('*');
+  const usesWildcardSyntax = hasLiteralWildcard && entries.some((entry) => effectiveType(entry, attribute) === 'string');
+
+  if (usesWildcardSyntax && !isEqualityOperator(predicate.operator)) {
     throw new SearchCopError(
       'INVALID_OPERATOR',
       `Wildcards ("*") are only supported with "=", got "${predicate.operator}" for attribute "${predicate.field}".`,
@@ -78,25 +100,25 @@ function validatePredicate(predicate: PredicateExpression, attributes: Attribute
     );
   }
 
-  const caseSensitive = attribute.type === 'string' ? attribute.caseSensitive ?? true : true;
-  const entries = attribute.fields?.length ? attribute.fields : [predicate.field];
-
   return {
     type: 'predicate',
-    fields: entries.map((entry) => resolveField(entry, predicate, attribute, isWildcard)),
-    caseSensitive,
+    fields: entries.map((entry) => resolveField(entry, predicate, attribute, hasLiteralWildcard)),
     position: predicate.position,
   };
+}
+
+function effectiveType(entry: AttributeField, attribute: AttributeDefinition): AttributeDefinition['type'] {
+  return typeof entry === 'string' ? attribute.type : entry.type;
 }
 
 function resolveField(
   entry: AttributeField,
   predicate: PredicateExpression,
   attribute: AttributeDefinition,
-  isWildcard: boolean,
+  hasLiteralWildcard: boolean,
 ): ValidatedField {
   if (typeof entry === 'string') {
-    return resolveColumn(entry, predicate, attribute, isWildcard);
+    return resolveColumn(entry, predicate, attribute, hasLiteralWildcard && attribute.type === 'string');
   }
 
   // Field-level type override: validated independently against its own declared type,
@@ -104,7 +126,7 @@ function resolveField(
   // is itself "string" — every other type simply can't match a wildcarded value.
   const { field, ...definition } = entry;
 
-  return resolveColumn(field, predicate, definition, isWildcard && definition.type === 'string');
+  return resolveColumn(field, predicate, definition, hasLiteralWildcard && definition.type === 'string');
 }
 
 function resolveColumn(field: string, predicate: PredicateExpression, definition: AttributeDefinition, isWildcard: boolean): ValidatedField {
@@ -118,12 +140,26 @@ function resolveValue(
   operator: Operator,
   definition: AttributeDefinition,
   isWildcard: boolean,
-): { value: ValidatedValue; operator: ValidatedOperator } | { operator: 'IS NULL' | 'IS NOT NULL' } | null {
-  if (isWildcard) {
-    const pattern = toLikePattern(rawValue);
-    const caseSensitive = definition.type === 'string' ? definition.caseSensitive ?? true : true;
+):
+  | { value: ValidatedValue; operator: ValidatedOperator; caseSensitive: boolean | 'lower' | 'upper' }
+  | { operator: 'IS NULL' | 'IS NOT NULL' }
+  | null {
+  // This field's own "caseSensitive" — independent of any other field in the same
+  // predicate, since a field-level type override can declare its own.
+  const caseSensitive = definition.type === 'string' ? definition.caseSensitive ?? true : true;
 
-    return { value: caseSensitive ? pattern : pattern.toLowerCase(), operator: 'LIKE' };
+  // "wildcards"/"leftWildcard"/"rightWildcard" implicitly wrap a bare-colon "=" value with
+  // "*" on one or both sides, as if the caller had written it themselves — but only when
+  // they didn't already write an explicit "*" (isWildcard) or an explicit "=" (only ":"
+  // opts in to this). "wildcards: true" is shorthand for both sides at once.
+  const canAutoWildcard = definition.type === 'string' && operator === ':' && !isWildcard;
+  const autoLeftWildcard = canAutoWildcard && (definition.wildcards === true || definition.leftWildcard === true);
+  const autoRightWildcard = canAutoWildcard && (definition.wildcards === true || definition.rightWildcard === true);
+
+  if (isWildcard || autoLeftWildcard || autoRightWildcard) {
+    const pattern = toLikePattern(rawValue, autoLeftWildcard, autoRightWildcard);
+
+    return { value: foldCase(pattern, caseSensitive), operator: 'LIKE', caseSensitive };
   }
 
   // Applies to every type, including a field-level override whose own type differs from
@@ -139,14 +175,21 @@ function resolveValue(
 
   const value = convertValue(rawValue, definition);
 
-  return value === null ? null : { value, operator };
+  // ":" is never valid SQL — normalize it to "=" now that we're producing an actual
+  // comparison (see ValidatedOperator).
+  return value === null ? null : { value, operator: operator === ':' ? '=' : operator, caseSensitive };
 }
 
 // Escapes existing "\", "%", and "_" so they match literally, then turns the DSL's
 // "*" wildcard into the LIKE wildcard "%". Order matters: escaping runs first so the
-// "%" introduced by "*" is never itself escaped.
-function toLikePattern(value: string): string {
-  return value.replace(/[\\%_]/g, (char) => `\\${char}`).replace(/\*/g, '%');
+// "%" introduced by "*" is never itself escaped. "leftWildcard"/"rightWildcard" (mirroring
+// the attribute options of the same name, and only ever with no explicit "*" already in
+// "value") additionally prefix/append a "%" — an implicit ends-with/starts-with/contains match.
+function toLikePattern(value: string, leftWildcard: boolean, rightWildcard: boolean): string {
+  const escaped = value.replace(/[\\%_]/g, (char) => `\\${char}`).replace(/\*/g, '%');
+  const prefixed = leftWildcard ? `%${escaped}` : escaped;
+
+  return rightWildcard ? `${prefixed}%` : prefixed;
 }
 
 function resolveNull(rawValue: string, definition: NullAttributeDefinition): { operator: 'IS NULL' | 'IS NOT NULL' } | null {
@@ -159,7 +202,7 @@ function resolveNull(rawValue: string, definition: NullAttributeDefinition): { o
 function convertValue(value: string, definition: Exclude<AttributeDefinition, NullAttributeDefinition>): ValidatedValue | null {
   switch (definition.type) {
     case 'string':
-      return definition.caseSensitive === false ? value.toLowerCase() : value;
+      return foldCase(value, definition.caseSensitive ?? true);
 
     case 'number':
       return convertNumber(value);

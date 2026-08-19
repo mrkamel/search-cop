@@ -37,7 +37,9 @@ Predicate
       return {
         type: 'predicate',
         field,
-        operator: operator ?? '=',
+        // No operator character written at all ("field:value") is the bare-colon
+        // shorthand — kept distinct from an explicit "=" (see ast/types.ts).
+        operator: operator ?? ':',
         value,
         position: location().start.offset + 1,
       }
@@ -49,7 +51,7 @@ Predicate
       return {
         type: 'predicate',
         field: '_all',
-        operator: '=',
+        operator: ':',
         value,
         position: location().start.offset + 1,
       }
@@ -62,7 +64,7 @@ Predicate
       return {
         type: 'predicate',
         field: '_all',
-        operator: '=',
+        operator: ':',
         value,
         position: location().start.offset + 1,
       }

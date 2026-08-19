@@ -45,6 +45,10 @@ const nullAttributes: AttributeMap = {
   assigned: { type: 'null', isNull: ['false', 'no'], isNotNull: ['true', 'yes'] },
 };
 
+const wildcardOptionAttributes: AttributeMap = {
+  name: { type: 'string', wildcards: true },
+};
+
 beforeAll(async () => {
   await AppDataSource.initialize();
 });
@@ -135,6 +139,36 @@ describe('compile: wildcards', () => {
   });
 });
 
+describe('compile: "wildcards" option (implicit contains matching)', () => {
+  it('compiles a bare-colon value to a "%...%" LIKE pattern', () => {
+    const [sql, params] = compileQuery({ query: 'name:Name', attributeMap: wildcardOptionAttributes }).getQueryAndParameters();
+
+    expect(sql).toContain(`name LIKE ? ESCAPE '\\'`);
+    expect(params).toEqual(['%Name%']);
+  });
+
+  it('compiles an explicit "=" value to a plain equality, not LIKE', () => {
+    const [sql, params] = compileQuery({ query: 'name:=Name', attributeMap: wildcardOptionAttributes }).getQueryAndParameters();
+
+    expect(sql).toContain('name = ?');
+    expect(params).toEqual(['Name']);
+  });
+
+  it('"leftWildcard" prefixes the value with "%" only', () => {
+    const leftWildcardAttributes: AttributeMap = { name: { type: 'string', leftWildcard: true } };
+    const [, params] = compileQuery({ query: 'name:Name', attributeMap: leftWildcardAttributes }).getQueryAndParameters();
+
+    expect(params).toEqual(['%Name']);
+  });
+
+  it('"rightWildcard" appends "%" to the value only', () => {
+    const rightWildcardAttributes: AttributeMap = { name: { type: 'string', rightWildcard: true } };
+    const [, params] = compileQuery({ query: 'name:Name', attributeMap: rightWildcardAttributes }).getQueryAndParameters();
+
+    expect(params).toEqual(['Name%']);
+  });
+});
+
 describe('compile: case sensitivity', () => {
   it('leaves the column bare for a case-sensitive attribute', () => {
     const [sql] = compileQuery({ query: 'name:Fred' }).getQueryAndParameters();
@@ -155,6 +189,24 @@ describe('compile: case sensitivity', () => {
 
     expect(sql).toContain(`LOWER(name) LIKE ? ESCAPE '\\'`);
     expect(params).toEqual(['fred%']);
+  });
+
+  it('wraps the column in UPPER() for "caseSensitive: \'upper\'", and uppercases the bound value', () => {
+    const upperCaseAttributes: AttributeMap = { name: { type: 'string', caseSensitive: 'upper' } };
+    const [sql, params] = compileQuery({ query: 'name:Fred', attributeMap: upperCaseAttributes }).getQueryAndParameters();
+
+    expect(sql).toContain('UPPER(name) = ?');
+    expect(params).toEqual(['FRED']);
+  });
+
+  it('applies a field-level override\'s own "caseSensitive", independent of the outer attribute\'s', () => {
+    const mixedCaseAttributes: AttributeMap = {
+      search: { type: 'string', fields: ['name', { field: 'description', type: 'string', caseSensitive: false }] },
+    };
+    const [sql, params] = compileQuery({ query: 'search:Fred', attributeMap: mixedCaseAttributes }).getQueryAndParameters();
+
+    expect(sql).toContain('(name = ? OR LOWER(description) = ?)');
+    expect(params).toEqual(['Fred', 'fred']);
   });
 });
 

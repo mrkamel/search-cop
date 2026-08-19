@@ -177,6 +177,45 @@ describe('search: wildcards', () => {
   });
 });
 
+describe('search: "wildcards" option (implicit contains matching)', () => {
+  const wildcardOptionAttributes: AttributeMap = { name: { type: 'string', wildcards: true } };
+
+  it('matches a bare-colon value anywhere in the field, without an explicit "*"', async () => {
+    const match = await createProduct({ name: 'First Name' });
+
+    await createProduct({ name: 'other' });
+
+    const products = await search({ repository: ProductRepository, query: 'name:Name', attributes: wildcardOptionAttributes }).getMany();
+
+    expect(products.map((product) => product.name)).toEqual([match.name]);
+  });
+
+  it('an explicit "=" still requires an exact match', async () => {
+    const match = await createProduct({ name: 'Name' });
+
+    await createProduct({ name: 'First Name' });
+
+    const products = await search({ repository: ProductRepository, query: 'name:=Name', attributes: wildcardOptionAttributes }).getMany();
+
+    expect(products.map((product) => product.name)).toEqual([match.name]);
+  });
+
+  it('applies to a bare term against "_all" too, since bare terms are ":" as well', async () => {
+    const matchesByName = await createProduct({ name: 'First Name', description: 'other' });
+    const matchesByDescription = await createProduct({ name: 'other', description: 'Second Name' });
+
+    await createProduct({ name: 'other', description: 'other' });
+
+    const products = await search({
+      repository: ProductRepository,
+      query: 'Name',
+      attributes: { _all: { type: 'string', fields: ['name', 'description'], wildcards: true } },
+    }).getMany();
+
+    expect(products.map((product) => product.name).sort()).toEqual([matchesByName.name, matchesByDescription.name].sort());
+  });
+});
+
 describe('search: case sensitivity', () => {
   it('is case-sensitive by default: a differently-cased value does not match', async () => {
     await createProduct({ name: 'FRED' });

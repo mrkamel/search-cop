@@ -30,8 +30,26 @@ interface BaseAttributeDefinition {
 
 export interface StringAttributeDefinition extends BaseAttributeDefinition {
   type: 'string';
-  /** Default: true. When false, "=" and wildcard matches ignore case. */
-  caseSensitive?: boolean;
+  /**
+   * Default: true. When false, "=" and wildcard matches ignore case, folding both the
+   * column and the value through SQL `LOWER()`. Set to `'lower'` (equivalent to `false`,
+   * but explicit) or `'upper'` instead to pick which fold function is used — e.g. to match
+   * an existing functional index built on `UPPER(column)` rather than `LOWER(column)`.
+   */
+  caseSensitive?: boolean | 'lower' | 'upper';
+  /**
+   * Default: false. Shorthand for `leftWildcard: true, rightWildcard: true` — see below.
+   */
+  wildcards?: boolean;
+  /**
+   * Default: false. When true, a bare-colon "=" value (e.g. `name:foo`, or a bare "_all"
+   * term) with no explicit "*" is implicitly prefixed with "*" — an ends-with match by
+   * default. A value with an explicit "*" is left exactly as written, and an explicit "="
+   * (`name:=foo`) always stays an exact match — both take precedence over this option.
+   */
+  leftWildcard?: boolean;
+  /** Default: false. Same as `leftWildcard`, but appends "*" instead — a starts-with match. */
+  rightWildcard?: boolean;
 }
 
 export interface UuidAttributeDefinition extends BaseAttributeDefinition {

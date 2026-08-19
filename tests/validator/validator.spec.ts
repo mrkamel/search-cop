@@ -11,6 +11,10 @@ const attributes: AttributeMap = {
   active: { type: 'boolean' },
   name: { type: 'string' },
   nameCaseInsensitive: { type: 'string', caseSensitive: false },
+  nameCaseInsensitiveUpper: { type: 'string', caseSensitive: 'upper' },
+  nameContains: { type: 'string', wildcards: true },
+  nameEndsWith: { type: 'string', leftWildcard: true },
+  nameStartsWith: { type: 'string', rightWildcard: true },
   createdAt: { type: 'datetime' },
   releaseDate: { type: 'date' },
   id: { type: 'uuid' },
@@ -49,8 +53,7 @@ describe('validate: value conversion', () => {
   it('converts numbers', () => {
     expect(validateQuery('price:>100')).toEqual({
       type: 'predicate',
-      fields: [{ field: 'price', operator: '>', value: 100 }],
-      caseSensitive: true,
+      fields: [{ field: 'price', operator: '>', value: 100, caseSensitive: true }],
       position: expect.any(Number),
     });
   });
@@ -210,34 +213,157 @@ describe('validate: wildcards', () => {
     // which, like any other unparseable value, never matches rather than erroring.
     expect(validateQuery('status:online*')).toMatchObject({ fields: [{ alwaysFalse: true }] });
   });
+
+  it('applies wildcard handling to a "string"-typed field override, even under a non-string outer attribute', () => {
+    const attributesWithStringOverride: AttributeMap = {
+      price: { type: 'number', fields: [{ field: 'sku', type: 'string' }] },
+    };
+
+    expect(validate({ expression: parse('price:abc*'), attributes: attributesWithStringOverride })).toMatchObject({
+      fields: [{ field: 'sku', operator: 'LIKE', value: 'abc%' }],
+    });
+  });
+});
+
+describe('validate: "wildcards" option (implicit contains matching)', () => {
+  it('wraps a bare-colon value with "*" on both sides', () => {
+    expect(validateQuery('nameContains:Name')).toMatchObject({ fields: [{ operator: 'LIKE', value: '%Name%' }] });
+  });
+
+  it('leaves an explicit "=" value exactly as written — no implicit wrapping', () => {
+    expect(validateQuery('nameContains:=Name')).toMatchObject({ fields: [{ operator: '=', value: 'Name' }] });
+  });
+
+  it('leaves a value with an explicit "*" exactly as written — no double-wrapping', () => {
+    expect(validateQuery('nameContains:Name*')).toMatchObject({ fields: [{ operator: 'LIKE', value: 'Name%' }] });
+    expect(validateQuery('nameContains:*Name')).toMatchObject({ fields: [{ operator: 'LIKE', value: '%Name' }] });
+  });
+
+  it('does not double-wrap an explicit "*" on a "string"-typed field override under a non-string outer attribute', () => {
+    const attributesWithStringOverride: AttributeMap = {
+      price: { type: 'number', fields: [{ field: 'sku', type: 'string', wildcards: true }] },
+    };
+
+    expect(validate({ expression: parse('price:abc*'), attributes: attributesWithStringOverride })).toMatchObject({
+      fields: [{ field: 'sku', operator: 'LIKE', value: 'abc%' }],
+    });
+  });
+
+  it('does not apply to attributes without the option — an exact match, like today', () => {
+    expect(validateQuery('name:Name')).toMatchObject({ fields: [{ operator: '=', value: 'Name' }] });
+  });
+
+  it('escapes literal "%", "_", and "\\" in the auto-wrapped value', () => {
+    expect(validateQuery('nameContains:100%')).toMatchObject({ fields: [{ value: '%100\\%%' }] });
+  });
+
+  it('respects "caseSensitive: false" on the auto-wrapped value', () => {
+    const attributesWithBoth: AttributeMap = { nameContains: { type: 'string', wildcards: true, caseSensitive: false } };
+
+    expect(validate({ expression: parse('nameContains:Name'), attributes: attributesWithBoth })).toMatchObject({
+      fields: [{ operator: 'LIKE', value: '%name%', caseSensitive: false }],
+    });
+  });
+
+  it('does not apply to ordering operators — a plain ">" comparison stays a comparison', () => {
+    expect(validateQuery('nameContains:>Name')).toMatchObject({ fields: [{ operator: '>', value: 'Name' }] });
+  });
+
+  it('applies to a bare term against "_all" too, since bare terms are ":" as well', () => {
+    const attributesWithAllWildcards: AttributeMap = { _all: { type: 'string', fields: ['name', 'description'], wildcards: true } };
+
+    expect(validate({ expression: parse('Name'), attributes: attributesWithAllWildcards })).toMatchObject({
+      fields: [
+        { field: 'name', operator: 'LIKE', value: '%Name%' },
+        { field: 'description', operator: 'LIKE', value: '%Name%' },
+      ],
+    });
+  });
+});
+
+describe('validate: "leftWildcard"/"rightWildcard" options (one-sided auto-wildcard)', () => {
+  it('"leftWildcard" prefixes the value with "*" only — an ends-with match', () => {
+    expect(validateQuery('nameEndsWith:Name')).toMatchObject({ fields: [{ operator: 'LIKE', value: '%Name' }] });
+  });
+
+  it('"rightWildcard" appends "*" to the value only — a starts-with match', () => {
+    expect(validateQuery('nameStartsWith:Name')).toMatchObject({ fields: [{ operator: 'LIKE', value: 'Name%' }] });
+  });
+
+  it('"wildcards: true" is equivalent to both "leftWildcard" and "rightWildcard" together', () => {
+    const attributesWithBoth: AttributeMap = { nameBoth: { type: 'string', leftWildcard: true, rightWildcard: true } };
+
+    expect(validate({ expression: parse('nameBoth:Name'), attributes: attributesWithBoth })).toMatchObject({
+      fields: [{ operator: 'LIKE', value: '%Name%' }],
+    });
+  });
+
+  it('an explicit "*" still takes precedence — no additional one-sided wrapping', () => {
+    expect(validateQuery('nameEndsWith:Name*')).toMatchObject({ fields: [{ operator: 'LIKE', value: 'Name%' }] });
+    expect(validateQuery('nameStartsWith:*Name')).toMatchObject({ fields: [{ operator: 'LIKE', value: '%Name' }] });
+  });
+
+  it('an explicit "=" still requires an exact match — no implicit wrapping', () => {
+    expect(validateQuery('nameEndsWith:=Name')).toMatchObject({ fields: [{ operator: '=', value: 'Name' }] });
+    expect(validateQuery('nameStartsWith:=Name')).toMatchObject({ fields: [{ operator: '=', value: 'Name' }] });
+  });
 });
 
 describe('validate: case sensitivity', () => {
   it('defaults to case-sensitive for string attributes', () => {
-    expect(validateQuery('name:Fred')).toMatchObject({ fields: [{ value: 'Fred' }], caseSensitive: true });
+    expect(validateQuery('name:Fred')).toMatchObject({ fields: [{ value: 'Fred', caseSensitive: true }] });
   });
 
-  it('lowercases the value for a case-insensitive attribute, marking the predicate as such', () => {
-    expect(validateQuery('nameCaseInsensitive:Fred')).toMatchObject({ fields: [{ value: 'fred' }], caseSensitive: false });
+  it('lowercases the value for a case-insensitive attribute, marking the field as such', () => {
+    expect(validateQuery('nameCaseInsensitive:Fred')).toMatchObject({ fields: [{ value: 'fred', caseSensitive: false }] });
   });
 
   it('lowercases wildcard values for a case-insensitive attribute too', () => {
     expect(validateQuery('nameCaseInsensitive:Fred*')).toMatchObject({
-      fields: [{ operator: 'LIKE', value: 'fred%' }],
-      caseSensitive: false,
+      fields: [{ operator: 'LIKE', value: 'fred%', caseSensitive: false }],
     });
   });
 
   it('lowercases ordering comparisons for a case-insensitive attribute too', () => {
     expect(validateQuery('nameCaseInsensitive:>Fred')).toMatchObject({
-      fields: [{ operator: '>', value: 'fred' }],
-      caseSensitive: false,
+      fields: [{ operator: '>', value: 'fred', caseSensitive: false }],
     });
   });
 
   it('marks non-string predicates as case-sensitive regardless', () => {
-    expect(validateQuery('status:online')).toMatchObject({ caseSensitive: true });
-    expect(validateQuery('price:>100')).toMatchObject({ caseSensitive: true });
+    expect(validateQuery('status:online')).toMatchObject({ fields: [{ caseSensitive: true }] });
+    expect(validateQuery('price:>100')).toMatchObject({ fields: [{ caseSensitive: true }] });
+  });
+
+  it('"caseSensitive: \'lower\'" behaves exactly like "false"', () => {
+    const attributesWithLower: AttributeMap = { nameLower: { type: 'string', caseSensitive: 'lower' } };
+
+    expect(validate({ expression: parse('nameLower:Fred'), attributes: attributesWithLower })).toMatchObject({
+      fields: [{ value: 'fred', caseSensitive: 'lower' }],
+    });
+  });
+
+  it('uppercases the value for "caseSensitive: \'upper\'", marking the field as such', () => {
+    expect(validateQuery('nameCaseInsensitiveUpper:Fred')).toMatchObject({ fields: [{ value: 'FRED', caseSensitive: 'upper' }] });
+  });
+
+  it('uppercases wildcard values for "caseSensitive: \'upper\'" too', () => {
+    expect(validateQuery('nameCaseInsensitiveUpper:Fred*')).toMatchObject({
+      fields: [{ operator: 'LIKE', value: 'FRED%', caseSensitive: 'upper' }],
+    });
+  });
+
+  it('a field-level override can declare its own "caseSensitive", independent of the outer attribute', () => {
+    const attributesWithOverride: AttributeMap = {
+      search: { type: 'string', fields: ['name', { field: 'description', type: 'string', caseSensitive: false }] },
+    };
+
+    expect(validate({ expression: parse('search:Fred'), attributes: attributesWithOverride })).toMatchObject({
+      fields: [
+        { field: 'name', value: 'Fred', caseSensitive: true },
+        { field: 'description', value: 'fred', caseSensitive: false },
+      ],
+    });
   });
 });
 
@@ -357,7 +483,6 @@ describe('validate: unparseable values never error, for any attribute — not ju
     expect(validateQuery('id:foo')).toEqual({
       type: 'predicate',
       fields: [{ alwaysFalse: true }],
-      caseSensitive: true,
       position: expect.any(Number),
     });
   });
@@ -454,8 +579,7 @@ describe('validate: nested boolean expressions', () => {
       children: [
         {
           type: 'predicate',
-          fields: [{ field: 'status', operator: '=', value: 'online' }],
-          caseSensitive: true,
+          fields: [{ field: 'status', operator: '=', value: 'online', caseSensitive: true }],
           position: expect.any(Number),
         },
         {
@@ -463,14 +587,12 @@ describe('validate: nested boolean expressions', () => {
           children: [
             {
               type: 'predicate',
-              fields: [{ field: 'price', operator: '>', value: 100 }],
-              caseSensitive: true,
+              fields: [{ field: 'price', operator: '>', value: 100, caseSensitive: true }],
               position: expect.any(Number),
             },
             {
               type: 'predicate',
-              fields: [{ field: 'status', operator: '=', value: 'offline' }],
-              caseSensitive: true,
+              fields: [{ field: 'status', operator: '=', value: 'offline', caseSensitive: true }],
               position: expect.any(Number),
             },
           ],
@@ -486,8 +608,7 @@ describe('validate: negation (NOT)', () => {
       type: 'not',
       child: {
         type: 'predicate',
-        fields: [{ field: 'status', operator: '=', value: 'online' }],
-        caseSensitive: true,
+        fields: [{ field: 'status', operator: '=', value: 'online', caseSensitive: true }],
         position: expect.any(Number),
       },
     });
@@ -503,7 +624,7 @@ describe('validate: negation (NOT)', () => {
   it('carries an "alwaysFalse" field through negation unchanged (negation is purely a compile-time SQL concern)', () => {
     expect(validateQuery('NOT status:banana')).toEqual({
       type: 'not',
-      child: { type: 'predicate', fields: [{ alwaysFalse: true }], caseSensitive: true, position: expect.any(Number) },
+      child: { type: 'predicate', fields: [{ alwaysFalse: true }], position: expect.any(Number) },
     });
   });
 
