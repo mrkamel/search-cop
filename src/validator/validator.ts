@@ -1,6 +1,6 @@
 import { validate as isUuid } from 'uuid';
 import type { Expression, Operator, PredicateExpression } from '../ast/types.js';
-import type { AttributeDefinition, AttributeField, AttributeMap } from '../attributes/types.js';
+import type { AttributeDefinition, AttributeField, AttributeMap, NullAttributeDefinition } from '../attributes/types.js';
 import type { ValidatedExpression, ValidatedField, ValidatedOperator, ValidatedPredicate, ValidatedValue } from './types.js';
 import { SearchCopError } from '../errors/errors.js';
 
@@ -12,6 +12,7 @@ const OPERATORS_BY_TYPE: Record<AttributeDefinition['type'], Operator[]> = {
   datetime: ['=', '>', '>=', '<', '<='],
   enum: ['='],
   uuid: ['='],
+  null: ['='],
 };
 
 /**
@@ -117,7 +118,11 @@ function resolveValue(
   operator: Operator,
   definition: AttributeDefinition,
   isWildcard: boolean,
-): { value: ValidatedValue; operator: ValidatedOperator } | null {
+): { value: ValidatedValue; operator: ValidatedOperator } | { operator: 'IS NULL' | 'IS NOT NULL' } | null {
+  if (definition.type === 'null') {
+    return resolveNull(rawValue, definition);
+  }
+
   if (isWildcard) {
     const pattern = toLikePattern(rawValue);
     const caseSensitive = definition.type === 'string' ? definition.caseSensitive ?? true : true;
@@ -141,7 +146,14 @@ function toLikePattern(value: string): string {
   return value.replace(/[\\%_]/g, (char) => `\\${char}`).replace(/\*/g, '%');
 }
 
-function convertValue(value: string, definition: AttributeDefinition): ValidatedValue | null {
+function resolveNull(rawValue: string, definition: NullAttributeDefinition): { operator: 'IS NULL' | 'IS NOT NULL' } | null {
+  if (definition.isNull.includes(rawValue)) return { operator: 'IS NULL' };
+  if (definition.isNotNull.includes(rawValue)) return { operator: 'IS NOT NULL' };
+
+  return null;
+}
+
+function convertValue(value: string, definition: Exclude<AttributeDefinition, NullAttributeDefinition>): ValidatedValue | null {
   switch (definition.type) {
     case 'string':
       return definition.caseSensitive === false ? value.toLowerCase() : value;

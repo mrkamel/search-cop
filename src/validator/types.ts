@@ -9,7 +9,11 @@ export type ValidatedOperator = Operator | 'LIKE';
 // A value that doesn't fit its (possibly field-overridden) type never errors — it
 // simply can never match, compiling to an unconditionally false condition instead
 // of a real comparison. "field" is inserted into the SQL verbatim — see AttributeField.
-export type ValidatedField = { alwaysFalse: true } | { field: string; value: ValidatedValue; operator: ValidatedOperator };
+export type ValidatedField =
+  | { alwaysFalse: true }
+  | { field: string; value: ValidatedValue; operator: ValidatedOperator }
+  // "null" attributes: an existence check, not a value comparison — no parameter is bound.
+  | { field: string; operator: 'IS NULL' | 'IS NOT NULL' };
 
 export interface ValidatedPredicate {
   type: 'predicate';

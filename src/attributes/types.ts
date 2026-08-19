@@ -1,4 +1,4 @@
-export type AttributeType = 'string' | 'number' | 'boolean' | 'date' | 'datetime' | 'enum' | 'uuid';
+export type AttributeType = 'string' | 'number' | 'boolean' | 'date' | 'datetime' | 'enum' | 'uuid' | 'null';
 
 /**
  * Validates this field independently against its own declared type, ignoring the
@@ -59,6 +59,15 @@ export interface EnumAttributeDefinition extends BaseAttributeDefinition {
   values: string[];
 }
 
+/** Compiles to an `IS NULL`/`IS NOT NULL` check instead of a value comparison — no parameter is bound. */
+export interface NullAttributeDefinition extends BaseAttributeDefinition {
+  type: 'null';
+  /** DSL values that match rows where the field IS NULL. */
+  isNull: string[];
+  /** DSL values that match rows where the field IS NOT NULL. */
+  isNotNull: string[];
+}
+
 export type AttributeDefinition =
   | StringAttributeDefinition
   | NumberAttributeDefinition
@@ -66,7 +75,8 @@ export type AttributeDefinition =
   | DateAttributeDefinition
   | DatetimeAttributeDefinition
   | EnumAttributeDefinition
-  | UuidAttributeDefinition;
+  | UuidAttributeDefinition
+  | NullAttributeDefinition;
 
 export type AttributeMap = Record<string, AttributeDefinition>;
 
@@ -78,7 +88,7 @@ export type AttributeValue<T extends AttributeDefinition> = T extends
   ? string
   : T extends NumberAttributeDefinition
     ? number
-    : T extends BooleanAttributeDefinition
+    : T extends BooleanAttributeDefinition | NullAttributeDefinition
       ? boolean
       : T extends DateAttributeDefinition | DatetimeAttributeDefinition
         ? Date

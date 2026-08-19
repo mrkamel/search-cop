@@ -55,6 +55,7 @@ export type {
   DateAttributeDefinition,
   DatetimeAttributeDefinition,
   EnumAttributeDefinition,
+  NullAttributeDefinition,
   NumberAttributeDefinition,
   StringAttributeDefinition,
   UuidAttributeDefinition,

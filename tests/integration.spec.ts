@@ -40,6 +40,10 @@ const uuidAttributes: AttributeMap = {
   id: { type: 'uuid' },
 };
 
+const nullAttributes: AttributeMap = {
+  assigned: { type: 'null', isNull: ['no'], isNotNull: ['yes'], fields: ['assignedTo'] },
+};
+
 const ProductRepository = AppDataSource.getRepository(ProductEntity);
 
 beforeAll(async () => {
@@ -301,6 +305,28 @@ describe('search: unparseable values never error, for any attribute — not just
     const products = await search({ repository: ProductRepository, query: 'id:foo', attributes: uuidAttributes }).getMany();
 
     expect(products).toEqual([]);
+  });
+});
+
+describe('search: "null" attributes', () => {
+  it('matches rows where the underlying field is null', async () => {
+    const match = await createProduct({ assignedTo: null });
+
+    await createProduct({ assignedTo: 'Fred' });
+
+    const products = await search({ repository: ProductRepository, query: 'assigned:no', attributes: nullAttributes }).getMany();
+
+    expect(products.map((product) => product.name)).toEqual([match.name]);
+  });
+
+  it('matches rows where the underlying field is not null', async () => {
+    await createProduct({ assignedTo: null });
+
+    const match = await createProduct({ assignedTo: 'Fred' });
+
+    const products = await search({ repository: ProductRepository, query: 'assigned:yes', attributes: nullAttributes }).getMany();
+
+    expect(products.map((product) => product.name)).toEqual([match.name]);
   });
 });
 

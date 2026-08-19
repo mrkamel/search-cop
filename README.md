@@ -74,8 +74,12 @@ Only attributes declared in `attributes` may be queried. Supported types:
 | `datetime` | `Date`         | `=` `>` `>=` `<` `<=`             |
 | `enum`     | `string`       | `=`                               |
 | `uuid`     | `string`       | `=`                               |
+| `null`     | none — compiles to `IS NULL`/`IS NOT NULL` | `=`  |
 
 `enum` attributes also require a `values: string[]` list.
+
+`null` attributes require `isNull: string[]` and `isNotNull: string[]` — see
+[Null checks](#null-checks).
 
 `string` attributes accept an optional `caseSensitive: boolean` (default `true`) — see
 [Case sensitivity](#case-sensitivity).
@@ -322,6 +326,28 @@ id:550E8400-E29B-41D4-A716-446655440000     // case-insensitive, lowercased on o
 active:true
 active:false
 ```
+
+### Null checks
+
+A `null` attribute compiles to an `IS NULL`/`IS NOT NULL` check on the underlying column
+instead of a value comparison — no parameter is ever bound. `isNull`/`isNotNull` are each a
+list of DSL values that trigger that check, letting you accept multiple synonyms for the
+same check:
+
+```ts
+attributes: {
+  assigned: { type: 'null', isNull: ['false', 'no'], isNotNull: ['true', 'yes'], fields: ['assignedTo'] },
+}
+```
+
+```text
+assigned:no      // assignedTo IS NULL
+assigned:yes     // assignedTo IS NOT NULL
+```
+
+A value that's in neither list never errors — like any other attribute type, it just never
+matches (see [Unparseable values never error](#unparseable-values-never-error)). Only `=` is
+supported, same as `enum`/`boolean`/`uuid`.
 
 ### Dates and datetimes
 

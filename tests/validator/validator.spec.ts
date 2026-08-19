@@ -15,6 +15,7 @@ const attributes: AttributeMap = {
   releaseDate: { type: 'date' },
   id: { type: 'uuid' },
   search: { type: 'string', fields: ['name', 'description'] },
+  assigned: { type: 'null', isNull: ['false', 'no'], isNotNull: ['true', 'yes'] },
 };
 
 function validateQuery(query: string) {
@@ -137,6 +138,35 @@ describe('validate: value conversion', () => {
         fields: [{ value: `550e8400-e29b-${version}1d4-a716-446655440000` }],
       });
     }
+  });
+});
+
+describe('validate: "null" attributes', () => {
+  it('resolves any "isNull" value to an "IS NULL" check, with no bound value', () => {
+    expect(validateQuery('assigned:false')).toMatchObject({ fields: [{ field: 'assigned', operator: 'IS NULL' }] });
+    expect(validateQuery('assigned:no')).toMatchObject({ fields: [{ field: 'assigned', operator: 'IS NULL' }] });
+  });
+
+  it('resolves any "isNotNull" value to an "IS NOT NULL" check, with no bound value', () => {
+    expect(validateQuery('assigned:true')).toMatchObject({ fields: [{ field: 'assigned', operator: 'IS NOT NULL' }] });
+    expect(validateQuery('assigned:yes')).toMatchObject({ fields: [{ field: 'assigned', operator: 'IS NOT NULL' }] });
+  });
+
+  it('does not include a "value" key for either check', () => {
+    const [result] = (validateQuery('assigned:yes') as { fields: object[] }).fields;
+
+    expect(result).not.toHaveProperty('value');
+  });
+
+  it('rejects unsupported operators', () => {
+    const [error] = tryCatch(() => validateQuery('assigned:>yes'));
+
+    expect(error).toBeInstanceOf(SearchCopError);
+    expect((error as SearchCopError).code).toBe('INVALID_OPERATOR');
+  });
+
+  it('does not error on an unknown value — it just never matches', () => {
+    expect(validateQuery('assigned:maybe')).toMatchObject({ fields: [{ alwaysFalse: true }] });
   });
 });
 

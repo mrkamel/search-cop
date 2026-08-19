@@ -41,6 +41,10 @@ const uuidAttributes: AttributeMap = {
   id: { type: 'uuid' },
 };
 
+const nullAttributes: AttributeMap = {
+  assigned: { type: 'null', isNull: ['false', 'no'], isNotNull: ['true', 'yes'] },
+};
+
 beforeAll(async () => {
   await AppDataSource.initialize();
 });
@@ -232,6 +236,29 @@ describe('compile: unparseable values compile to "1 = 0" for any attribute, not 
 
     expect(sql).toContain('id = ?');
     expect(params).toEqual(['550e8400-e29b-41d4-a716-446655440000']);
+  });
+});
+
+describe('compile: "null" attributes', () => {
+  it('compiles an "isNull" value to "IS NULL", with no bound parameter', () => {
+    const [sql, params] = compileQuery({ query: 'assigned:no', attributeMap: nullAttributes }).getQueryAndParameters();
+
+    expect(sql).toContain('assigned IS NULL');
+    expect(params).toEqual([]);
+  });
+
+  it('compiles an "isNotNull" value to "IS NOT NULL", with no bound parameter', () => {
+    const [sql, params] = compileQuery({ query: 'assigned:yes', attributeMap: nullAttributes }).getQueryAndParameters();
+
+    expect(sql).toContain('assigned IS NOT NULL');
+    expect(params).toEqual([]);
+  });
+
+  it('compiles an unknown value to an unconditional "1 = 0", not an error', () => {
+    const [sql, params] = compileQuery({ query: 'assigned:maybe', attributeMap: nullAttributes }).getQueryAndParameters();
+
+    expect(sql).toContain('1 = 0');
+    expect(params).toEqual([]);
   });
 });
 

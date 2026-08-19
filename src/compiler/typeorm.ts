@@ -36,17 +36,20 @@ export function compile<Entity extends ObjectLiteral>(options: CompileOptions<En
  * (with your own joins, aliases, and other `where` conditions already in place).
  */
 export function compileCondition(expression: ValidatedExpression): Brackets {
-  return new Brackets((builder) => applyExpression(builder, expression));
+  return new Brackets((builder) => applyExpression({ builder, expression }));
 }
 
-function applyExpression(builder: WhereExpressionBuilder, expression: ValidatedExpression): void {
+function applyExpression(
+  { builder, expression }:
+  { builder: WhereExpressionBuilder, expression: ValidatedExpression }
+): void {
   if (expression.type === 'predicate') {
-    applyPredicate(builder, expression, 'and');
+    applyPredicate({ builder, predicate: expression, combinator: 'and' });
     return;
   }
 
   if (expression.type === 'not') {
-    applyNot(builder, expression.child, 'and');
+    applyNot({ builder, expression: expression.child, combinator: 'and' });
     return;
   }
 
@@ -54,17 +57,20 @@ function applyExpression(builder: WhereExpressionBuilder, expression: ValidatedE
 
   expression.children.forEach((child) => {
     if (child.type === 'predicate') {
-      applyPredicate(builder, child, combinator);
+      applyPredicate({ builder, predicate: child, combinator });
     } else if (child.type === 'not') {
-      applyNot(builder, child.child, combinator);
+      applyNot({ builder, expression: child.child, combinator });
     } else {
-      applyBrackets(builder, child, combinator);
+      applyBrackets({ builder, expression: child, combinator });
     }
   });
 }
 
-function applyBrackets(builder: WhereExpressionBuilder, expression: ValidatedExpression, combinator: Combinator): void {
-  const brackets = new Brackets((inner) => applyExpression(inner, expression));
+function applyBrackets(
+  { builder, expression, combinator }:
+  { builder: WhereExpressionBuilder, expression: ValidatedExpression, combinator: Combinator }
+): void {
+  const brackets = new Brackets((inner) => applyExpression({ builder: inner, expression }));
 
   if (combinator === 'and') {
     builder.andWhere(brackets);
@@ -73,8 +79,11 @@ function applyBrackets(builder: WhereExpressionBuilder, expression: ValidatedExp
   }
 }
 
-function applyNot(builder: WhereExpressionBuilder, expression: ValidatedExpression, combinator: Combinator): void {
-  const brackets = new NotBrackets((inner) => applyExpression(inner, expression));
+function applyNot(
+  { builder, expression, combinator }:
+  { builder: WhereExpressionBuilder, expression: ValidatedExpression, combinator: Combinator }
+): void {
+  const brackets = new NotBrackets((inner) => applyExpression({ builder: inner, expression }));
 
   if (combinator === 'and') {
     builder.andWhere(brackets);
@@ -83,10 +92,13 @@ function applyNot(builder: WhereExpressionBuilder, expression: ValidatedExpressi
   }
 }
 
-function applyPredicate(builder: WhereExpressionBuilder, predicate: ValidatedPredicate, combinator: Combinator): void {
+function applyPredicate(
+  { builder, predicate, combinator }:
+  { builder: WhereExpressionBuilder, predicate: ValidatedPredicate, combinator: Combinator }
+): void {
   if (predicate.fields.length === 1) {
     for (const field of predicate.fields) {
-      applyFieldCondition(builder, field, predicate.caseSensitive, combinator);
+      applyFieldCondition({ builder, field, caseSensitive: predicate.caseSensitive, combinator });
     }
 
     return;
@@ -96,7 +108,7 @@ function applyPredicate(builder: WhereExpressionBuilder, predicate: ValidatedPre
   // (only "=" is supported for multi-field attributes, so this is always an OR).
   const brackets = new Brackets((inner) => {
     for (const field of predicate.fields) {
-      applyFieldCondition(inner, field, predicate.caseSensitive, 'or');
+      applyFieldCondition({ builder: inner, field, caseSensitive: predicate.caseSensitive, combinator: 'or' });
     }
   });
 
@@ -107,7 +119,10 @@ function applyPredicate(builder: WhereExpressionBuilder, predicate: ValidatedPre
   }
 }
 
-function applyFieldCondition(builder: WhereExpressionBuilder, field: ValidatedField, caseSensitive: boolean, combinator: Combinator): void {
+function applyFieldCondition(
+  { builder, field, caseSensitive, combinator }:
+  { builder: WhereExpressionBuilder, field: ValidatedField, caseSensitive: boolean, combinator: Combinator }
+): void {
   // A value that didn't fit its (possibly field-overridden) type — see AttributeFieldType
   // — never errors; it just can never match, so the field contributes an unconditional
   // false to the OR/AND rather than a real comparison.
@@ -121,13 +136,27 @@ function applyFieldCondition(builder: WhereExpressionBuilder, field: ValidatedFi
     return;
   }
 
-  const parameterName = nextParameterName();
-  const escapeClause = field.operator === 'LIKE' ? " ESCAPE '\\'" : '';
   // "field" (see AttributeField) is inserted into the SQL verbatim — no escaping, no
   // alias qualification. Quoting/qualification, if needed, is the caller's responsibility.
   // The value is already lowercased by the validator when caseSensitive is false, so
   // only the column needs LOWER() here.
   const column = caseSensitive ? field.field : `LOWER(${field.field})`;
+
+  // "null" attributes: an existence check, not a value comparison — no parameter to bind.
+  if (!('value' in field)) {
+    const condition = `${column} ${field.operator}`;
+
+    if (combinator === 'and') {
+      builder.andWhere(condition);
+    } else {
+      builder.orWhere(condition);
+    }
+
+    return;
+  }
+
+  const parameterName = nextParameterName();
+  const escapeClause = field.operator === 'LIKE' ? " ESCAPE '\\'" : '';
   const condition = `${column} ${field.operator} :${parameterName}${escapeClause}`;
   const parameters = { [parameterName]: field.value };
 
