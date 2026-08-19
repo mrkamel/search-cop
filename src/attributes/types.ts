@@ -88,7 +88,7 @@ export type AttributeValue<T extends AttributeDefinition> = T extends
   ? string
   : T extends NumberAttributeDefinition
     ? number
-    : T extends BooleanAttributeDefinition | NullAttributeDefinition
+    : T extends BooleanAttributeDefinition
       ? boolean
       : T extends DateAttributeDefinition | DatetimeAttributeDefinition
         ? Date

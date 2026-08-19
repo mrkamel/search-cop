@@ -11,6 +11,29 @@ function nextParameterName(): string {
   return `search_cop_${parameterCounter}`;
 }
 
+// "condition" is typed as a plain union (rather than overloading this function like
+// andWhere/orWhere themselves) so a single runtime check narrows it for both branches below.
+function applyWhere(
+  { builder, combinator, condition, parameters }:
+  { builder: WhereExpressionBuilder, combinator: Combinator, condition: string | Brackets, parameters?: ObjectLiteral }
+): void {
+  if (typeof condition === 'string') {
+    if (combinator === 'and') {
+      builder.andWhere(condition, parameters);
+    } else {
+      builder.orWhere(condition, parameters);
+    }
+
+    return;
+  }
+
+  if (combinator === 'and') {
+    builder.andWhere(condition);
+  } else {
+    builder.orWhere(condition);
+  }
+}
+
 export interface CompileOptions<Entity extends ObjectLiteral> {
   repository: Repository<Entity>;
   expression: ValidatedExpression;
@@ -72,11 +95,7 @@ function applyBrackets(
 ): void {
   const brackets = new Brackets((inner) => applyExpression({ builder: inner, expression }));
 
-  if (combinator === 'and') {
-    builder.andWhere(brackets);
-  } else {
-    builder.orWhere(brackets);
-  }
+  applyWhere({ builder, combinator, condition: brackets });
 }
 
 function applyNot(
@@ -85,11 +104,7 @@ function applyNot(
 ): void {
   const brackets = new NotBrackets((inner) => applyExpression({ builder: inner, expression }));
 
-  if (combinator === 'and') {
-    builder.andWhere(brackets);
-  } else {
-    builder.orWhere(brackets);
-  }
+  applyWhere({ builder, combinator, condition: brackets });
 }
 
 function applyPredicate(
@@ -112,11 +127,7 @@ function applyPredicate(
     }
   });
 
-  if (combinator === 'and') {
-    builder.andWhere(brackets);
-  } else {
-    builder.orWhere(brackets);
-  }
+  applyWhere({ builder, combinator, condition: brackets });
 }
 
 function applyFieldCondition(
@@ -127,12 +138,7 @@ function applyFieldCondition(
   // — never errors; it just can never match, so the field contributes an unconditional
   // false to the OR/AND rather than a real comparison.
   if ('alwaysFalse' in field) {
-    if (combinator === 'and') {
-      builder.andWhere('1 = 0');
-    } else {
-      builder.orWhere('1 = 0');
-    }
-
+    applyWhere({ builder, combinator, condition: '1 = 0' });
     return;
   }
 
@@ -144,14 +150,7 @@ function applyFieldCondition(
 
   // "null" attributes: an existence check, not a value comparison — no parameter to bind.
   if (!('value' in field)) {
-    const condition = `${column} ${field.operator}`;
-
-    if (combinator === 'and') {
-      builder.andWhere(condition);
-    } else {
-      builder.orWhere(condition);
-    }
-
+    applyWhere({ builder, combinator, condition: `${column} ${field.operator}` });
     return;
   }
 
@@ -160,9 +159,5 @@ function applyFieldCondition(
   const condition = `${column} ${field.operator} :${parameterName}${escapeClause}`;
   const parameters = { [parameterName]: field.value };
 
-  if (combinator === 'and') {
-    builder.andWhere(condition, parameters);
-  } else {
-    builder.orWhere(condition, parameters);
-  }
+  applyWhere({ builder, combinator, condition, parameters });
 }

@@ -119,10 +119,6 @@ function resolveValue(
   definition: AttributeDefinition,
   isWildcard: boolean,
 ): { value: ValidatedValue; operator: ValidatedOperator } | { operator: 'IS NULL' | 'IS NOT NULL' } | null {
-  if (definition.type === 'null') {
-    return resolveNull(rawValue, definition);
-  }
-
   if (isWildcard) {
     const pattern = toLikePattern(rawValue);
     const caseSensitive = definition.type === 'string' ? definition.caseSensitive ?? true : true;
@@ -130,8 +126,15 @@ function resolveValue(
     return { value: caseSensitive ? pattern : pattern.toLowerCase(), operator: 'LIKE' };
   }
 
+  // Applies to every type, including a field-level override whose own type differs from
+  // the outer attribute's — the outer predicate's operator was only validated against the
+  // outer attribute's type, not this (possibly stricter) override's.
   if (!OPERATORS_BY_TYPE[definition.type].includes(operator)) {
     return null;
+  }
+
+  if (definition.type === 'null') {
+    return resolveNull(rawValue, definition);
   }
 
   const value = convertValue(rawValue, definition);

@@ -168,6 +168,19 @@ describe('validate: "null" attributes', () => {
   it('does not error on an unknown value — it just never matches', () => {
     expect(validateQuery('assigned:maybe')).toMatchObject({ fields: [{ alwaysFalse: true }] });
   });
+
+  it('a field-level "null" override rejects an operator the outer attribute allows but "null" does not', () => {
+    // The outer attribute's own operator check only validates against "date" (which allows
+    // ">"), not against the override's stricter "null" type (which only allows "=") — the
+    // override must reject ">" itself rather than compiling an "IS NOT NULL" regardless.
+    const attributesWithNullOverride: AttributeMap = {
+      createdAt: { type: 'date', fields: [{ field: 'assignedTo', type: 'null', isNull: ['no'], isNotNull: ['yes'] }] },
+    };
+
+    expect(validate({ expression: parse('createdAt:>yes'), attributes: attributesWithNullOverride })).toMatchObject({
+      fields: [{ alwaysFalse: true }],
+    });
+  });
 });
 
 describe('validate: wildcards', () => {
