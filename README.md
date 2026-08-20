@@ -76,7 +76,9 @@ Only attributes declared in `attributes` may be queried. Supported types:
 | `uuid`     | `string`       | `=`                               |
 | `null`     | none — compiles to `IS NULL`/`IS NOT NULL` | `=`  |
 
-`enum` attributes also require a `values: string[]` list.
+`enum` attributes also require a `values: string[]` list, or a `values: Record<string, string>`
+map to translate the query-facing value into a different underlying value, e.g.
+`{ type: 'enum', values: { pending: 'waiting', completed: 'finished' } }`.
 
 `null` attributes require `isNull: string[]` and `isNotNull: string[]` — see
 [Null checks](#null-checks).

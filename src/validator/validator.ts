@@ -232,8 +232,12 @@ function convertBoolean(value: string): boolean | null {
   return null;
 }
 
-function convertEnum(value: string, values: string[]): string | null {
-  return values.includes(value) ? value : null;
+function convertEnum(value: string, values: string[] | Record<string, string>): string | null {
+  if (Array.isArray(values)) {
+    return values.includes(value) ? value : null;
+  }
+
+  return Object.hasOwn(values, value) ? values[value] ?? null : null;
 }
 
 function convertUuidValue(value: string): string | null {

@@ -40,7 +40,7 @@ export interface DatetimeAttributeDefinition extends BaseAttributeDefinition {
 
 export interface EnumAttributeDefinition extends BaseAttributeDefinition {
   type: 'enum';
-  values: string[];
+  values: string[] | Record<string, string>;
 }
 
 export interface NullAttributeDefinition extends BaseAttributeDefinition {

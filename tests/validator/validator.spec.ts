@@ -75,6 +75,26 @@ describe('validate: value conversion', () => {
     expect(validateQuery('status:invalid')).toMatchObject({ fields: [{ alwaysFalse: true }] });
   });
 
+  it('maps enum values declared as a Record to their underlying value', () => {
+    const attributesWithEnumMap: AttributeMap = {
+      status: { type: 'enum', values: { pending: 'waiting', completed: 'finished' } },
+    };
+
+    expect(validate({ expression: parse('status:pending'), attributes: attributesWithEnumMap })).toMatchObject({
+      fields: [{ field: 'status', value: 'waiting' }],
+    });
+  });
+
+  it('does not error on an unknown value for an enum declared as a Record — it just never matches', () => {
+    const attributesWithEnumMap: AttributeMap = {
+      status: { type: 'enum', values: { pending: 'waiting', completed: 'finished' } },
+    };
+
+    expect(validate({ expression: parse('status:invalid'), attributes: attributesWithEnumMap })).toMatchObject({
+      fields: [{ alwaysFalse: true }],
+    });
+  });
+
   it('converts date-only values to a UTC midnight Date', () => {
     const result = validateQuery('releaseDate:>=2026-01-01');
 

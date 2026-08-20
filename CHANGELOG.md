@@ -37,6 +37,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   way. See [Quoted values](README.md#quoted-values).
 - New `INVALID_WILDCARD` error code, thrown when a bare `*` appears anywhere other than the
   start/end of a bare-`:` `string` value (e.g. `name:Pet*Other`).
+- `enum` attributes now also accept `values: Record<string, string>`, mapping the
+  query-facing value to a different underlying value (e.g.
+  `{ type: 'enum', values: { pending: 'waiting', completed: 'finished' } }`), in addition to
+  the existing `values: string[]` form. See [Attributes](README.md#attributes).
 
 ### Changed
 
