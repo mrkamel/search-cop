@@ -193,10 +193,14 @@ describe('validate: wildcards', () => {
     expect(validateQuery('name:*Pet*')).toMatchObject({ fields: [{ operator: 'LIKE', value: '%Pet%' }] });
   });
 
-  it('escapes literal "%", "_", and "\\" so they are matched literally', () => {
-    expect(validateQuery('name:100%*')).toMatchObject({ fields: [{ value: '100\\%%' }] });
-    expect(validateQuery('name:a_b*')).toMatchObject({ fields: [{ value: 'a\\_b%' }] });
-    expect(validateQuery('name:foo\\bar*')).toMatchObject({ fields: [{ value: 'foo\\\\bar%' }] });
+  it('escapes literal "%", "_", and "!" (the LIKE escape character) so they are matched literally', () => {
+    expect(validateQuery('name:100%*')).toMatchObject({ fields: [{ value: '100!%%' }] });
+    expect(validateQuery('name:a_b*')).toMatchObject({ fields: [{ value: 'a!_b%' }] });
+    expect(validateQuery('name:100!bar*')).toMatchObject({ fields: [{ value: '100!!bar%' }] });
+  });
+
+  it('does not escape a literal "\\" — it has no special meaning to LIKE', () => {
+    expect(validateQuery('name:foo\\bar*')).toMatchObject({ fields: [{ value: 'foo\\bar%' }] });
   });
 
   it('rejects wildcard values combined with ordering operators', () => {
@@ -253,8 +257,8 @@ describe('validate: "wildcards" option (implicit contains matching)', () => {
     expect(validateQuery('name:Name')).toMatchObject({ fields: [{ operator: '=', value: 'Name' }] });
   });
 
-  it('escapes literal "%", "_", and "\\" in the auto-wrapped value', () => {
-    expect(validateQuery('nameContains:100%')).toMatchObject({ fields: [{ value: '%100\\%%' }] });
+  it('escapes literal "%", "_", and "!" in the auto-wrapped value', () => {
+    expect(validateQuery('nameContains:100%')).toMatchObject({ fields: [{ value: '%100!%%' }] });
   });
 
   it('respects "caseSensitive: false" on the auto-wrapped value', () => {

@@ -2,6 +2,17 @@ import type { Operator } from '../ast/types.js';
 
 export type ValidatedValue = string | number | boolean | Date;
 
+// The character used for a LIKE pattern's ESCAPE clause — shared between the validator
+// (which escapes "%"/"_"/this character itself in the raw value) and the compiler (which
+// writes the matching "ESCAPE '!'" clause). Deliberately not "\": Postgres and SQLite treat
+// backslash as an ordinary character inside a string literal (so `'\'` is one character),
+// but MySQL's default sql_mode treats backslash as a string-escape character too, so that
+// same `'\'` is parsed as an escaped quote rather than a terminated string — there's no
+// single spelling of a backslash-as-escape-char literal that's correct for both. "!" has no
+// special meaning in any of the three dialects' string literal syntax, sidestepping the
+// whole issue.
+export const LIKE_ESCAPE_CHARACTER = '!';
+
 // LIKE never comes from the parser — the validator produces it from "=" predicates
 // on string attributes whose value contains a "*" wildcard. ":" (the bare-colon shorthand,
 // see ast/types.ts) is always normalized to "=" by the validator — it's not valid SQL, and

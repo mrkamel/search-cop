@@ -1,6 +1,7 @@
 import { validate as isUuid } from 'uuid';
 import type { Expression, Operator, PredicateExpression } from '../ast/types.js';
 import type { AttributeDefinition, AttributeField, AttributeMap, NullAttributeDefinition } from '../attributes/types.js';
+import { LIKE_ESCAPE_CHARACTER } from './types.js';
 import type { ValidatedExpression, ValidatedField, ValidatedOperator, ValidatedPredicate, ValidatedValue } from './types.js';
 import { SearchCopError } from '../errors/errors.js';
 import { DEFAULT_FIELD } from '../parser/parser.js';
@@ -187,13 +188,17 @@ function resolveValue(
   return value === null ? null : { value, operator: operator === ':' ? '=' : operator, caseSensitive };
 }
 
-// Escapes existing "\", "%", and "_" so they match literally, then turns the DSL's
-// "*" wildcard into the LIKE wildcard "%". Order matters: escaping runs first so the
-// "%" introduced by "*" is never itself escaped. "leftWildcard"/"rightWildcard" (mirroring
-// the attribute options of the same name, and only ever with no explicit "*" already in
+// Escapes existing occurrences of the LIKE escape character itself (see
+// LIKE_ESCAPE_CHARACTER), "%", and "_" so they match literally, then turns the DSL's "*"
+// wildcard into the LIKE wildcard "%". Order matters: escaping runs first so the "%"
+// introduced by "*" is never itself escaped. "leftWildcard"/"rightWildcard" (mirroring the
+// attribute options of the same name, and only ever with no explicit "*" already in
 // "value") additionally prefix/append a "%" — an implicit ends-with/starts-with/contains match.
 function toLikePattern(value: string, leftWildcard: boolean, rightWildcard: boolean): string {
-  const escaped = value.replace(/[\\%_]/g, (char) => `\\${char}`).replace(/\*/g, '%');
+  const escaped = value
+    .replace(new RegExp(`[${LIKE_ESCAPE_CHARACTER}%_]`, 'g'), (char) => `${LIKE_ESCAPE_CHARACTER}${char}`)
+    .replace(/\*/g, '%');
+
   const prefixed = leftWildcard ? `%${escaped}` : escaped;
 
   return rightWildcard ? `${prefixed}%` : prefixed;

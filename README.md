@@ -179,10 +179,11 @@ name:"foo \"bar\" baz"                   // foo "bar" baz
 ### Wildcards
 
 A `*` in a `string` attribute's value (with `=`) compiles to a `LIKE` predicate, with `*`
-translated to SQL's `%`. Any literal `%`, `_`, or `\` in the value is escaped so it's matched
-literally rather than as a `LIKE` wildcard. There's no way to match a literal `*` — every
-`*` is treated as a wildcard. Wildcards are rejected with `>` `>=` `<` `<=`, and don't apply
-to `enum`/`uuid`/other attribute types.
+translated to SQL's `%`. Any literal `%` or `_` in the value is escaped so it's matched
+literally rather than as a `LIKE` wildcard; `\` needs no escaping — it isn't special to
+`LIKE` at all. There's no way to match a literal `*` — every `*` is treated as a wildcard.
+Wildcards are rejected with `>` `>=` `<` `<=`, and don't apply to `enum`/`uuid`/other
+attribute types.
 
 ```text
 name:Pet*                                   // starts with "Pet"

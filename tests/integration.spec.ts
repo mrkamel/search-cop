@@ -427,6 +427,42 @@ describe('search: negation (NOT)', () => {
     expect(products.map((product) => product.name)).toEqual([match.name]);
   });
 
+  it('does not drop a row whose non-matching field is NULL — a NULL column is never "Name" either', async () => {
+    // Regression test: SQL's three-valued logic means "NOT(name = 'Name' OR assignedTo =
+    // 'Name')" naively evaluates to NULL (not true) for a row where assignedTo IS NULL and
+    // name doesn't match, silently dropping it from the results instead of including it.
+    const nullableMultiFieldAttributes: AttributeMap = { search: { type: 'string', fields: ['name', 'assignedTo'] } };
+
+    const match = await createProduct({ name: 'other', assignedTo: null });
+
+    await createProduct({ name: 'Name', assignedTo: null });
+    await createProduct({ name: 'other', assignedTo: 'Name' });
+
+    const products = await search({
+      repository: ProductRepository,
+      query: 'NOT search:Name',
+      attributes: nullableMultiFieldAttributes,
+    }).getMany();
+
+    expect(products.map((product) => product.name)).toEqual([match.name]);
+  });
+
+  it('stays NULL-safe through double negation too', async () => {
+    const nullableMultiFieldAttributes: AttributeMap = { search: { type: 'string', fields: ['name', 'assignedTo'] } };
+
+    const match = await createProduct({ name: 'Name', assignedTo: null });
+
+    await createProduct({ name: 'other', assignedTo: null });
+
+    const products = await search({
+      repository: ProductRepository,
+      query: 'NOT NOT search:Name',
+      attributes: nullableMultiFieldAttributes,
+    }).getMany();
+
+    expect(products.map((product) => product.name)).toEqual([match.name]);
+  });
+
   it('negating an unparseable value matches everything, since the un-negated predicate matched nothing', async () => {
     const match = await createProduct({});
 

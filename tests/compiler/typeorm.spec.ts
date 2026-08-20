@@ -128,14 +128,14 @@ describe('compile: wildcards', () => {
   it('compiles a wildcard equality predicate to LIKE with an ESCAPE clause', () => {
     const [sql, params] = compileQuery({ query: 'name:Pet*' }).getQueryAndParameters();
 
-    expect(sql).toContain(`name LIKE ? ESCAPE '\\'`);
+    expect(sql).toContain(`name LIKE ? ESCAPE '!'`);
     expect(params).toEqual(['Pet%']);
   });
 
   it('escapes literal "%" and "_" so they are not treated as LIKE wildcards', () => {
     const [, params] = compileQuery({ query: 'name:100%_off*' }).getQueryAndParameters();
 
-    expect(params).toEqual(['100\\%\\_off%']);
+    expect(params).toEqual(['100!%!_off%']);
   });
 });
 
@@ -143,7 +143,7 @@ describe('compile: "wildcards" option (implicit contains matching)', () => {
   it('compiles a bare-colon value to a "%...%" LIKE pattern', () => {
     const [sql, params] = compileQuery({ query: 'name:Name', attributeMap: wildcardOptionAttributes }).getQueryAndParameters();
 
-    expect(sql).toContain(`name LIKE ? ESCAPE '\\'`);
+    expect(sql).toContain(`name LIKE ? ESCAPE '!'`);
     expect(params).toEqual(['%Name%']);
   });
 
@@ -187,7 +187,7 @@ describe('compile: case sensitivity', () => {
   it('wraps the column in LOWER() for a case-insensitive wildcard too', () => {
     const [sql, params] = compileQuery({ query: 'name:Fred*', attributeMap: caseInsensitiveAttributes }).getQueryAndParameters();
 
-    expect(sql).toContain(`LOWER(name) LIKE ? ESCAPE '\\'`);
+    expect(sql).toContain(`LOWER(name) LIKE ? ESCAPE '!'`);
     expect(params).toEqual(['fred%']);
   });
 
@@ -221,7 +221,7 @@ describe('compile: multi-field attributes', () => {
   it('ORs together each field for a wildcard match', () => {
     const [sql, params] = compileQuery({ query: 'search:Fred*', attributeMap: multiFieldAttributes }).getQueryAndParameters();
 
-    expect(sql).toContain(`(name LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\')`);
+    expect(sql).toContain(`(name LIKE ? ESCAPE '!' OR description LIKE ? ESCAPE '!')`);
     expect(params).toEqual(['Fred%', 'Fred%']);
   });
 
@@ -249,7 +249,7 @@ describe('compile: multi-field attributes', () => {
   it('applies a "raw" field under a wildcard match too', () => {
     const [sql, params] = compileQuery({ query: 'search:Fred*', attributeMap: rawFieldAttributes }).getQueryAndParameters();
 
-    expect(sql).toContain(`CAST(price AS TEXT) LIKE ? ESCAPE '\\'`);
+    expect(sql).toContain(`CAST(price AS TEXT) LIKE ? ESCAPE '!'`);
     expect(params).toEqual(['Fred%', 'Fred%']);
   });
 });
@@ -349,44 +349,48 @@ describe('compile: alias', () => {
 });
 
 describe('compile: negation (NOT)', () => {
-  it('wraps a negated predicate in NOT(...)', () => {
+  // NOT's content is rendered to a single string and wrapped in exactly one
+  // "COALESCE(..., FALSE)" — see src/compiler/typeorm.ts's renderNegated — so a NULL
+  // column can't make the un-negated expression evaluate to NULL/UNKNOWN, which would
+  // otherwise make SQL's NOT(...) also NULL and silently drop that row from the results.
+  it('wraps a negated predicate in NOT(COALESCE(..., FALSE))', () => {
     const [sql, params] = compileQuery({ query: 'NOT status:online' }).getQueryAndParameters();
 
-    expect(sql).toContain('NOT(status = ?)');
+    expect(sql).toContain('NOT(COALESCE((status = ?), FALSE))');
     expect(params).toEqual(['online']);
   });
 
-  it('wraps a negated group in NOT(...), preserving the AND/OR structure inside', () => {
+  it('wraps a negated group in NOT(COALESCE(..., FALSE)), preserving the AND/OR structure inside', () => {
     const [sql, params] = compileQuery({ query: 'NOT (status:online OR status:pending)' }).getQueryAndParameters();
 
-    expect(sql).toContain('NOT((status = ? OR status = ?))');
+    expect(sql).toContain('NOT(COALESCE((status = ? OR status = ?), FALSE))');
     expect(params).toEqual(['online', 'pending']);
   });
 
   it('combines a negated term with a non-negated one via implicit AND', () => {
     const [sql, params] = compileQuery({ query: 'NOT status:online price:>100' }).getQueryAndParameters();
 
-    expect(sql).toMatch(/NOT\(status = \?\) AND .*price > 100/);
+    expect(sql).toMatch(/NOT\(COALESCE\(\(status = \?\), FALSE\)\) AND .*price > 100/);
     expect(params).toEqual(['online']);
   });
 
-  it('double negation compiles to nested NOT(NOT(...))', () => {
+  it('double negation compiles to nested NOT(COALESCE(...))', () => {
     const [sql] = compileQuery({ query: 'NOT NOT status:online' }).getQueryAndParameters();
 
-    expect(sql).toContain('NOT(NOT(status = ?))');
+    expect(sql).toContain('NOT(COALESCE((NOT(COALESCE((status = ?), FALSE))), FALSE))');
   });
 
   it('negates a multi-field OR group as a whole, not each field independently', () => {
     const [sql, params] = compileQuery({ query: 'NOT search:Fred', attributeMap: multiFieldAttributes }).getQueryAndParameters();
 
-    expect(sql).toContain('NOT((name = ? OR description = ?))');
+    expect(sql).toContain('NOT(COALESCE(((name = ? OR description = ?)), FALSE))');
     expect(params).toEqual(['Fred', 'Fred']);
   });
 
-  it('negating an unparseable ("1 = 0") predicate compiles to "NOT(1 = 0)" — i.e. always true', () => {
+  it('negating an unparseable ("1 = 0") predicate compiles to an unconditional true', () => {
     const [sql, params] = compileQuery({ query: 'NOT id:foo', attributeMap: uuidAttributes }).getQueryAndParameters();
 
-    expect(sql).toContain('NOT(1 = 0)');
+    expect(sql).toContain('NOT(COALESCE((1 = 0), FALSE))');
     expect(params).toEqual([]);
   });
 });
