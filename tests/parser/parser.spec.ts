@@ -243,6 +243,60 @@ describe('parse: negation (NOT)', () => {
   });
 });
 
+describe('parse: negation ("-" shorthand)', () => {
+  it('negates a predicate, same as "NOT"', () => {
+    expect(stripPosition(parse('-status:online'))).toEqual({ type: 'not', child: predicate('status', ':', 'online') });
+  });
+
+  it('negates a bare term against "_all"', () => {
+    expect(stripPosition(parse('-cheap'))).toEqual({ type: 'not', child: predicate('_all', ':', 'cheap') });
+  });
+
+  it('negates a parenthesized group with no space before "("', () => {
+    expect(stripPosition(parse('-(status:online OR status:pending)'))).toEqual({
+      type: 'not',
+      child: {
+        type: 'or',
+        children: [predicate('status', ':', 'online'), predicate('status', ':', 'pending')],
+      },
+    });
+  });
+
+  it('negates just the next bare term amid implicit AND, not the whole phrase', () => {
+    expect(stripPosition(parse('red -cheap'))).toEqual({
+      type: 'and',
+      children: [predicate('_all', ':', 'red'), { type: 'not', child: predicate('_all', ':', 'cheap') }],
+    });
+  });
+
+  it('supports double negation', () => {
+    expect(stripPosition(parse('--cheap'))).toEqual({
+      type: 'not',
+      child: { type: 'not', child: predicate('_all', ':', 'cheap') },
+    });
+  });
+
+  it('requires "-" to be directly attached to what follows — a space makes it a literal value instead', () => {
+    expect(stripPosition(parse('- cheap'))).toEqual({
+      type: 'and',
+      children: [predicate('_all', ':', '-'), predicate('_all', ':', 'cheap')],
+    });
+  });
+
+  it('treats a lone "-" as the literal value "-", not negation', () => {
+    expect(stripPosition(parse('-'))).toEqual(predicate('_all', ':', '-'));
+  });
+
+  it('does not treat "-" inside a value as negation — e.g. a negative number, or a hyphenated word', () => {
+    expect(stripPosition(parse('price:-5'))).toEqual(predicate('price', ':', '-5'));
+    expect(stripPosition(parse('well-known'))).toEqual(predicate('_all', ':', 'well-known'));
+  });
+
+  it('allows searching for a literal leading "-" via quoting', () => {
+    expect(stripPosition(parse('-"AND"'))).toEqual({ type: 'not', child: predicate('_all', ':', 'AND') });
+  });
+});
+
 describe('parse: default field ("_all")', () => {
   it('parses a bare value with no "field:" prefix against "_all"', () => {
     expect(stripPosition(parse('Pet'))).toEqual(predicate('_all', ':', 'Pet'));

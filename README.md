@@ -146,6 +146,25 @@ NOT NOT status:online                    // double negation cancels out
 literally named `NOTstatus`, not a negation. `NOT` is reserved the same way `AND`/`OR`
 are (see below) — double-quote it (`"NOT"`) to search for the literal word.
 
+`-` is shorthand for `NOT`, including on a bare term against `_all` (see
+[Default field](#default-field)):
+
+```text
+-status:online                           // == NOT status:online
+-cheap                                   // negates a bare term
+red -cheap                               // == red AND (NOT cheap)
+-(status:online OR status:pending)       // negates the whole group
+```
+
+Unlike `NOT`, `-` only counts as negation when directly attached to what follows — no
+space. `- cheap` (a space after `-`) parses `-` itself as the literal value `-`, followed
+by a separate `cheap` term; a lone `-` is likewise just the literal value `-`. This also
+means `-` is never mistaken for negation *inside* a value — a negative number
+(`price:-5`) or a hyphenated word (`well-known`) are unaffected, since this rule only
+ever applies at the very start of a term. Searching for a literal leading `-` needs
+quoting (`-"AND"` negates the literal word `AND`; `"-test"` searches for the literal
+string `-test`).
+
 ### Quoted values
 
 Unquoted values end at the first whitespace or parenthesis, so a value containing either

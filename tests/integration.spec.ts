@@ -434,6 +434,16 @@ describe('search: negation (NOT)', () => {
 
     expect(products.map((product) => product.name)).toEqual([match.name]);
   });
+
+  it('"-" is shorthand for "NOT", including on a bare term against "_all"', async () => {
+    const match = await createProduct({ status: 'offline' });
+
+    await createProduct({ status: 'online' });
+
+    const products = await search({ repository: ProductRepository, query: '-status:online', attributes }).getMany();
+
+    expect(products.map((product) => product.name)).toEqual([match.name]);
+  });
 });
 
 describe('searchCondition: merging into a caller-built queryBuilder', () => {

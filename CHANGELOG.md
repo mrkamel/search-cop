@@ -24,6 +24,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to `boolean` — `'upper'` folds through SQL `UPPER()` instead of `LOWER()`, e.g. to match
   an existing functional index. `false` and `'lower'` are equivalent. See
   [Case sensitivity](README.md#case-sensitivity).
+- `-` as shorthand for `NOT`, including on bare terms against `_all` (e.g. `-cheap`) — only
+  when directly attached to what follows (no space), so it never conflicts with a negative
+  number (`price:-5`) or a hyphenated word (`well-known`). Purely syntactic sugar; compiles
+  identically to `NOT`.
 
 ### Changed
 

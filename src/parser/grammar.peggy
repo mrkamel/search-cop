@@ -29,6 +29,13 @@ PrimaryExpression
   // Binds tighter than AND/OR, so it only negates the next term/group; parenthesize to
   // negate more ("NOT (a b)" negates the whole group; "NOT a b" is "(NOT a) AND b").
   / "NOT" &[\t\n\r (] _ e:PrimaryExpression { return { type: 'not', child: e } }
+  // "-" is shorthand for "NOT", but only when directly attached to what follows (no
+  // whitespace) — "-status:online" and "-(...)" negate, but "- foo" (a space after "-")
+  // or a lone trailing "-" is just the literal value "-" (or "-" is part of that value,
+  // e.g. a negative number like "price:-5" — this rule never fires inside a value,
+  // only at the start of a term). Searching for a literal leading "-" needs quoting
+  // (`"-test"`), same as "AND"/"OR"/"NOT" do.
+  / "-" &[^\t\n\r ] e:PrimaryExpression { return { type: 'not', child: e } }
   / Predicate
 
 Predicate
