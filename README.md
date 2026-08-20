@@ -74,11 +74,19 @@ Only attributes declared in `attributes` may be queried. Supported types:
 | `datetime` | `Date`         | `=` `>` `>=` `<` `<=`             |
 | `enum`     | `string`       | `=`                               |
 | `uuid`     | `string`       | `=`                               |
+| `null`     | none — compiles to `IS NULL`/`IS NOT NULL` | `=`  |
 
-`enum` attributes also require a `values: string[]` list.
+`enum` attributes also require a `values: string[]` list, or a `values: Record<string, string>`
+map to translate the query-facing value into a different underlying value, e.g.
+`{ type: 'enum', values: { pending: 'waiting', completed: 'finished' } }`.
 
-`string` attributes accept an optional `caseSensitive: boolean` (default `true`) — see
-[Case sensitivity](#case-sensitivity).
+`null` attributes require `isNull: string[]` and `isNotNull: string[]` — see
+[Null checks](#null-checks).
+
+`string` attributes accept an optional `caseSensitive: boolean | 'lower' | 'upper'` (default
+`true`) — see [Case sensitivity](#case-sensitivity) — and optional `wildcards`/
+`leftWildcard`/`rightWildcard: boolean` (all default `false`) — see
+[Implicit wildcards](#implicit-wildcards).
 
 `uuid` values are validated against RFC 9562 (version 1-8 and variant nibbles, plus the nil
 and max UUIDs) using the [`uuid`](https://www.npmjs.com/package/uuid) package, and are
@@ -104,6 +112,12 @@ price:<100
 price:<=100
 createdAt:>=2026-01-01
 ```
+
+For most attribute types, `status:online` and `status:=online` compile identically. For a
+`string` attribute they don't: the bare `:` form always compiles to a `LIKE` predicate (so
+it can support wildcard syntax — see [Wildcards](#wildcards)) and enables the `wildcards`
+option (see [Implicit wildcards](#implicit-wildcards)); an explicit `=` always compiles to
+a plain `=` comparison and opts out of both.
 
 Combine predicates with `AND` / `OR` (case-sensitive — lowercase `and`/`or` are rejected)
 and parentheses. `AND` binds tighter than `OR`:
@@ -136,24 +150,63 @@ NOT NOT status:online                    // double negation cancels out
 literally named `NOTstatus`, not a negation. `NOT` is reserved the same way `AND`/`OR`
 are (see below) — double-quote it (`"NOT"`) to search for the literal word.
 
+`-` is shorthand for `NOT`, including on a bare term against `_all` (see
+[Default field](#default-field)):
+
+```text
+-status:online                           // == NOT status:online
+-cheap                                   // negates a bare term
+red -cheap                               // == red AND (NOT cheap)
+-(status:online OR status:pending)       // negates the whole group
+```
+
+Unlike `NOT`, `-` only counts as negation when directly attached to what follows — no
+space. `- cheap` (a space after `-`) parses `-` itself as the literal value `-`, followed
+by a separate `cheap` term; a lone `-` is likewise just the literal value `-`. This also
+means `-` is never mistaken for negation *inside* a value — a negative number
+(`price:-5`) or a hyphenated word (`well-known`) are unaffected, since this rule only
+ever applies at the very start of a term. Searching for a literal leading `-` needs
+quoting (`-"AND"` negates the literal word `AND`; `"-test"` searches for the literal
+string `-test`).
+
 ### Quoted values
 
-Unquoted values end at the first whitespace or parenthesis, so a value containing either
-must be double-quoted. Inside quotes, `\"` and `\\` are unescaped to `"` and `\`:
+Unquoted values end at the first (unescaped) whitespace or parenthesis, so a value
+containing either must be double-quoted:
 
 ```text
 name:"foo bar"
 name:"(foo)"
-name:"foo \"bar\" baz"                   // foo "bar" baz
 ```
+
+`\` escapes the following character the same way in both quoted and unquoted values: `\"`
+unescapes to a literal `"` (only meaningful inside quotes, to embed one without ending the
+value early), `\\` to a literal `\`, and `\*` to a literal `*` (see [Wildcards](#wildcards)
+— the one case that matters outside quotes too). Any other `\<char>` just drops the
+backslash, so a literal backslash needs doubling:
+
+```text
+name:"foo \"bar\" baz"                   // foo "bar" baz
+name:back\\slash                         // back\slash
+name:back\slash                          // backslash (a single "\" is just dropped)
+```
+
+Escaping in an unquoted value can't swallow a terminator — `\` followed by a space or
+parenthesis still ends the value there; quote the value instead if you need one included.
 
 ### Wildcards
 
-A `*` in a `string` attribute's value (with `=`) compiles to a `LIKE` predicate, with `*`
-translated to SQL's `%`. Any literal `%`, `_`, or `\` in the value is escaped so it's matched
-literally rather than as a `LIKE` wildcard. There's no way to match a literal `*` — every
-`*` is treated as a wildcard. Wildcards are rejected with `>` `>=` `<` `<=`, and don't apply
-to `enum`/`uuid`/other attribute types.
+Wildcard syntax exists only for the bare `:` shorthand on a `string` attribute — every
+explicit operator (`=`, `>`, `>=`, `<`, `<=`) always treats `*` as a plain literal
+character, never a wildcard (see [Query syntax](#query-syntax)). Because of that, `:` on a
+`string` attribute always compiles to a `LIKE` predicate — even when the value has no `*`
+at all — while every explicit operator always compiles to a plain comparison. Wildcards
+don't apply to `enum`/`uuid`/other attribute types.
+
+A `*` translates to SQL's `%`; any literal `%` or `_` in the value is escaped so it's
+matched literally rather than as a `LIKE` wildcard. A bare `*` is only valid at the very
+start and/or end of the value — one anywhere else throws `INVALID_WILDCARD` rather than
+silently falling back to a literal match:
 
 ```text
 name:Pet*                                   // starts with "Pet"
@@ -161,9 +214,49 @@ name:*fred                                  // ends with "fred"
 name:*pet*                                  // contains "pet"
 ```
 
-By default, case-sensitivity of the match depends on the database's `LIKE` collation (e.g.
-Postgres' `LIKE` is case-sensitive; SQLite's is case-insensitive for ASCII by default) — see
-[Case sensitivity](#case-sensitivity) for a portable, explicit alternative.
+Escape a literal `*` with `\*` (see [Quoted values](#quoted-values)):
+
+```text
+name:Pet\*                                  // literal value "Pet*", not a wildcard
+name:*Pet\*Other                            // starts with "Pet*Other" (real wildcard + literal "*")
+```
+
+Because `:` always compiles to `LIKE`, case-sensitivity of *every* bare-colon `string`
+match (wildcarded or not) depends on the database's `LIKE` collation by default (e.g.
+Postgres' `LIKE` is case-sensitive; SQLite's is case-insensitive for ASCII regardless of
+collation) — see [Case sensitivity](#case-sensitivity) for a portable, explicit alternative.
+
+### Implicit wildcards
+
+Set `wildcards: true` on a `string` attribute to make the bare `:` shorthand a contains
+match by default, without writing `*` yourself:
+
+```ts
+attributes: {
+  name: { type: 'string', wildcards: true },
+}
+```
+
+```text
+name:pet                                    // contains "pet" — same as name:*pet*
+name:pet*                                   // explicit "*" is left exactly as written
+name:=pet                                   // explicit "=" always stays an exact match
+```
+
+`wildcards: true` is shorthand for setting both `leftWildcard` and `rightWildcard`, which
+you can also set independently for a one-sided match:
+
+```ts
+attributes: {
+  endsWithName: { type: 'string', leftWildcard: true },     // endsWithName:pet   -> *pet  (ends with)
+  startsWithName: { type: 'string', rightWildcard: true },  // startsWithName:pet -> pet*  (starts with)
+}
+```
+
+Precedence, in order: an explicit `*` anywhere in the value is always respected as-is (no
+double-wrapping); otherwise an explicit `=` is always an exact match; only a bare `:` with
+neither falls back to the implicit wrap. This also applies to a bare term against `_all`
+(see [Default field](#default-field)), since bare terms are `:` too.
 
 ### Case sensitivity
 
@@ -181,6 +274,22 @@ This compiles to `LOWER(column) <op> LOWER(value)`, using the standard SQL `LOWE
 function so behavior is identical across Postgres, MySQL, and SQLite — rather than a
 database-specific mechanism (e.g. Postgres' `ILIKE` or `citext`, or a `COLLATE` clause).
 
+Set `caseSensitive: 'upper'` instead to fold through `UPPER()` rather than `LOWER()` — for
+example, to match an existing functional index built on `UPPER(column)`:
+
+```ts
+attributes: {
+  name: { type: 'string', caseSensitive: 'upper' },
+}
+```
+
+```text
+name:=Fred     // UPPER(name) = 'FRED'
+```
+
+`caseSensitive: 'lower'` is also accepted, and behaves exactly like `false` — it's just the
+explicit spelling, useful if you'd rather not read `false` as "off".
+
 ### Multi-field attributes
 
 An attribute can match against multiple underlying columns instead of a single one — for
@@ -193,8 +302,9 @@ attributes: {
 ```
 
 ```text
-name:Fred          // firstName = 'Fred' OR lastName = 'Fred'
+name:Fred          // (firstName LIKE 'Fred' ...) OR (lastName LIKE 'Fred' ...)
 name:Fred*         // (firstName LIKE 'Fred%' ...) OR (lastName LIKE 'Fred%' ...)
+name:=Fred         // firstName = 'Fred' OR lastName = 'Fred'
 ```
 
 Only `=` is supported (including its wildcard form) — ordering operators (`>` `>=` `<`
@@ -231,7 +341,7 @@ attributes: {
 ```
 
 ```text
-name:Fred     // firstName = 'Fred' OR lastName = 'Fred' OR CAST(id AS TEXT) = 'Fred'
+name:Fred     // (firstName LIKE 'Fred' ...) OR (lastName LIKE 'Fred' ...) OR (CAST(id AS TEXT) LIKE 'Fred' ...)
 ```
 
 `CAST` itself is standard SQL and works identically everywhere, but the type-name argument
@@ -258,7 +368,7 @@ attributes: {
 ```
 
 ```text
-name:Fred                                    // firstName = 'Fred' OR lastName = 'Fred'
+name:Fred                                    // (firstName LIKE 'Fred' ...) OR (lastName LIKE 'Fred' ...)
                                               //   OR (id is skipped: "Fred" isn't a valid uuid)
 name:550e8400-e29b-41d4-a716-446655440000     // ...OR id = '550e8400-e29b-41d4-a716-446655440000'
 ```
@@ -298,16 +408,17 @@ other. Since `AND` is already implicit between predicates, multiple bare terms b
 free-text search — each term ORs across the configured fields, and terms AND together:
 
 ```text
-red shoes             // (name = 'red' OR description = 'red')
-                      //   AND (name = 'shoes' OR description = 'shoes')
+red shoes             // (name LIKE 'red' ... OR description LIKE 'red' ...)
+                      //   AND (name LIKE 'shoes' ... OR description LIKE 'shoes' ...)
 red* shoes*           // same, but with wildcards on each term
-red status:online     // (name = 'red' OR description = 'red') AND status = 'online'
+red status:online     // (name LIKE 'red' ... OR description LIKE 'red' ...) AND status = 'online'
 ```
 
-If `_all` isn't declared in `attributes`, a bare query throws `UNKNOWN_ATTRIBUTE` like any
-other undeclared field. `AND`/`OR`/`NOT` are always reserved as keywords, even as a bare
-term on their own — double-quote them (`"AND"`, `"OR"`, `"NOT"`) to search for the literal
-word.
+Unlike any other undeclared field, a bare query never errors when `_all` isn't declared in
+`attributes` — it's opt-in, so it just never matches (see
+[Unparseable values never error](#unparseable-values-never-error)) rather than being
+treated as a typo. `AND`/`OR`/`NOT` are always reserved as keywords, even as a bare term on
+their own — double-quote them (`"AND"`, `"OR"`, `"NOT"`) to search for the literal word.
 
 ### UUIDs
 
@@ -322,6 +433,28 @@ id:550E8400-E29B-41D4-A716-446655440000     // case-insensitive, lowercased on o
 active:true
 active:false
 ```
+
+### Null checks
+
+A `null` attribute compiles to an `IS NULL`/`IS NOT NULL` check on the underlying column
+instead of a value comparison — no parameter is ever bound. `isNull`/`isNotNull` are each a
+list of DSL values that trigger that check, letting you accept multiple synonyms for the
+same check:
+
+```ts
+attributes: {
+  assigned: { type: 'null', isNull: ['false', 'no'], isNotNull: ['true', 'yes'], fields: ['assignedTo'] },
+}
+```
+
+```text
+assigned:no      // assignedTo IS NULL
+assigned:yes     // assignedTo IS NOT NULL
+```
+
+A value that's in neither list never errors — like any other attribute type, it just never
+matches (see [Unparseable values never error](#unparseable-values-never-error)). Only `=` is
+supported, same as `enum`/`boolean`/`uuid`.
 
 ### Dates and datetimes
 
@@ -355,8 +488,10 @@ rows — rather than a client error. If you want to reject malformed input befor
 Invalid queries throw a `SearchCopError` with a `code`:
 
 - `INVALID_SYNTAX` — the query does not parse (includes an approximate character `position`)
-- `UNKNOWN_ATTRIBUTE` — the field is not declared in `attributes`
+- `UNKNOWN_ATTRIBUTE` — the field is not declared in `attributes` (except a bare query
+  against an undeclared `_all` — see [Default field](#default-field))
 - `INVALID_OPERATOR` — the operator is not supported for the attribute's type (e.g. `status:>online` for an `enum`)
+- `INVALID_WILDCARD` — a bare `*` appears somewhere other than the start/end of a bare-colon `string` value (e.g. `name:Pet*Other`; see [Wildcards](#wildcards))
 
 Note there's no error for a value that doesn't fit its type (an invalid uuid, an unknown
 enum value, ...) — see [Unparseable values never error](#unparseable-values-never-error).

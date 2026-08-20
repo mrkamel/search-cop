@@ -1,7 +1,13 @@
-import { Brackets, NotBrackets, type ObjectLiteral, type Repository, type SelectQueryBuilder, type WhereExpressionBuilder } from 'typeorm';
+import { Brackets, type ObjectLiteral, type Repository, type SelectQueryBuilder, type WhereExpressionBuilder } from 'typeorm';
+import { LIKE_ESCAPE_CHARACTER } from '../validator/types.js';
 import type { ValidatedExpression, ValidatedField, ValidatedPredicate } from '../validator/types.js';
 
 type Combinator = 'and' | 'or';
+
+interface Rendered {
+  sql: string;
+  parameters: ObjectLiteral;
+}
 
 let parameterCounter = 0;
 
@@ -11,10 +17,55 @@ function nextParameterName(): string {
   return `search_cop_${parameterCounter}`;
 }
 
+function buildFieldCondition(field: ValidatedField): Rendered {
+  if ('alwaysFalse' in field) {
+    return { sql: '1 = 0', parameters: {} };
+  }
+
+  if (!('value' in field)) {
+    return { sql: `${field.field} ${field.operator}`, parameters: {} };
+  }
+
+  const column = (() => {
+    if (field.caseSensitive === true) return field.field;
+    if (field.caseSensitive === 'upper') return `UPPER(${field.field})`;
+
+    return `LOWER(${field.field})`;
+  })();
+
+  const parameterName = nextParameterName();
+  const escapeClause = field.operator === 'LIKE' ? ` ESCAPE '${LIKE_ESCAPE_CHARACTER}'` : '';
+
+  return {
+    sql: `${column} ${field.operator} :${parameterName}${escapeClause}`,
+    parameters: { [parameterName]: field.value },
+  };
+}
+
+function applyWhere(
+  { builder, combinator, condition, parameters }:
+  { builder: WhereExpressionBuilder, combinator: Combinator, condition: string | Brackets, parameters?: ObjectLiteral }
+): void {
+  if (typeof condition === 'string') {
+    if (combinator === 'and') {
+      builder.andWhere(condition, parameters);
+    } else {
+      builder.orWhere(condition, parameters);
+    }
+
+    return;
+  }
+
+  if (combinator === 'and') {
+    builder.andWhere(condition);
+  } else {
+    builder.orWhere(condition);
+  }
+}
+
 export interface CompileOptions<Entity extends ObjectLiteral> {
   repository: Repository<Entity>;
   expression: ValidatedExpression;
-  /** SQL alias used for the entity's table in the generated query. Defaults to the table name. */
   alias?: string;
 }
 
@@ -27,26 +78,21 @@ export function compile<Entity extends ObjectLiteral>(options: CompileOptions<En
   return queryBuilder;
 }
 
-/**
- * Compiles a validated expression to a standalone `Brackets` fragment instead of a full
- * query. `Brackets`/`NotBrackets` are TypeORM's own portable where-clause primitive — the
- * callback isn't evaluated until it's handed to `.andWhere()`/`.orWhere()` on a real
- * `WhereExpressionBuilder`, so this needs no repository or queryBuilder of its own. Use
- * this to merge search-cop's conditions into a queryBuilder you've already built yourself
- * (with your own joins, aliases, and other `where` conditions already in place).
- */
 export function compileCondition(expression: ValidatedExpression): Brackets {
-  return new Brackets((builder) => applyExpression(builder, expression));
+  return new Brackets((builder) => applyExpression({ builder, expression }));
 }
 
-function applyExpression(builder: WhereExpressionBuilder, expression: ValidatedExpression): void {
+function applyExpression(
+  { builder, expression }:
+  { builder: WhereExpressionBuilder, expression: ValidatedExpression }
+): void {
   if (expression.type === 'predicate') {
-    applyPredicate(builder, expression, 'and');
+    applyPredicate({ builder, predicate: expression, combinator: 'and' });
     return;
   }
 
   if (expression.type === 'not') {
-    applyNot(builder, expression.child, 'and');
+    applyNot({ builder, expression: expression.child, combinator: 'and' });
     return;
   }
 
@@ -54,86 +100,99 @@ function applyExpression(builder: WhereExpressionBuilder, expression: ValidatedE
 
   expression.children.forEach((child) => {
     if (child.type === 'predicate') {
-      applyPredicate(builder, child, combinator);
+      applyPredicate({ builder, predicate: child, combinator });
     } else if (child.type === 'not') {
-      applyNot(builder, child.child, combinator);
+      applyNot({ builder, expression: child.child, combinator });
     } else {
-      applyBrackets(builder, child, combinator);
+      applyBrackets({ builder, expression: child, combinator });
     }
   });
 }
 
-function applyBrackets(builder: WhereExpressionBuilder, expression: ValidatedExpression, combinator: Combinator): void {
-  const brackets = new Brackets((inner) => applyExpression(inner, expression));
+function applyBrackets(
+  { builder, expression, combinator }:
+  { builder: WhereExpressionBuilder, expression: ValidatedExpression, combinator: Combinator }
+): void {
+  const brackets = new Brackets((inner) => applyExpression({ builder: inner, expression }));
 
-  if (combinator === 'and') {
-    builder.andWhere(brackets);
-  } else {
-    builder.orWhere(brackets);
-  }
+  applyWhere({ builder, combinator, condition: brackets });
 }
 
-function applyNot(builder: WhereExpressionBuilder, expression: ValidatedExpression, combinator: Combinator): void {
-  const brackets = new NotBrackets((inner) => applyExpression(inner, expression));
+// Rendered to a flat string, not nested Brackets — TypeORM's Brackets can't be read back
+// as SQL, so a negated group couldn't otherwise be wrapped in one COALESCE(NOT(...), FALSE).
+function applyNot(
+  { builder, expression, combinator }:
+  { builder: WhereExpressionBuilder, expression: ValidatedExpression, combinator: Combinator }
+): void {
+  const { sql, parameters } = renderNegated(expression);
 
-  if (combinator === 'and') {
-    builder.andWhere(brackets);
-  } else {
-    builder.orWhere(brackets);
-  }
+  applyWhere({ builder, combinator, condition: sql, parameters });
 }
 
-function applyPredicate(builder: WhereExpressionBuilder, predicate: ValidatedPredicate, combinator: Combinator): void {
+// COALESCE guards against a NULL column making NOT(...) itself NULL (dropping the row).
+function renderNegated(expression: ValidatedExpression): Rendered {
+  const { sql, parameters } = renderPositive(expression);
+
+  return { sql: `NOT(COALESCE((${sql}), FALSE))`, parameters };
+}
+
+function renderPositive(expression: ValidatedExpression): Rendered {
+  if (expression.type === 'not') {
+    return renderNegated(expression.child);
+  }
+
+  if (expression.type === 'predicate') {
+    return renderPredicate(expression);
+  }
+
+  const combinator = expression.type === 'and' ? 'AND' : 'OR';
+  const rendered = expression.children.map((child) => {
+    const { sql, parameters } = renderPositive(child);
+    const wrapped = child.type === 'and' || child.type === 'or' ? `(${sql})` : sql;
+
+    return { sql: wrapped, parameters };
+  });
+
+  return {
+    sql: rendered.map((value) => value.sql).join(` ${combinator} `),
+    parameters: Object.assign({}, ...rendered.map((value) => value.parameters)),
+  };
+}
+
+function renderPredicate(predicate: ValidatedPredicate): Rendered {
+  const rendered = predicate.fields.map(buildFieldCondition);
+  const sql = rendered.map((value) => value.sql).join(' OR ');
+  const parameters = Object.assign({}, ...rendered.map((value) => value.parameters));
+
+  return rendered.length > 1 ? { sql: `(${sql})`, parameters } : { sql, parameters };
+}
+
+function applyPredicate(
+  { builder, predicate, combinator }:
+  { builder: WhereExpressionBuilder, predicate: ValidatedPredicate, combinator: Combinator }
+): void {
   if (predicate.fields.length === 1) {
     for (const field of predicate.fields) {
-      applyFieldCondition(builder, field, predicate.caseSensitive, combinator);
+      applyFieldCondition({ builder, field, combinator });
     }
 
     return;
   }
 
-  // Multiple underlying columns for one logical attribute: matches if any field matches
-  // (only "=" is supported for multi-field attributes, so this is always an OR).
   const brackets = new Brackets((inner) => {
     for (const field of predicate.fields) {
-      applyFieldCondition(inner, field, predicate.caseSensitive, 'or');
+      applyFieldCondition({ builder: inner, field, combinator: 'or' });
     }
   });
 
-  if (combinator === 'and') {
-    builder.andWhere(brackets);
-  } else {
-    builder.orWhere(brackets);
-  }
+  applyWhere({ builder, combinator, condition: brackets });
 }
 
-function applyFieldCondition(builder: WhereExpressionBuilder, field: ValidatedField, caseSensitive: boolean, combinator: Combinator): void {
-  // A value that didn't fit its (possibly field-overridden) type — see AttributeFieldType
-  // — never errors; it just can never match, so the field contributes an unconditional
-  // false to the OR/AND rather than a real comparison.
-  if ('alwaysFalse' in field) {
-    if (combinator === 'and') {
-      builder.andWhere('1 = 0');
-    } else {
-      builder.orWhere('1 = 0');
-    }
+function applyFieldCondition(
+  { builder, field, combinator }:
+  { builder: WhereExpressionBuilder, field: ValidatedField, combinator: Combinator }
+): void {
+  const { sql, parameters } = buildFieldCondition(field);
 
-    return;
-  }
-
-  const parameterName = nextParameterName();
-  const escapeClause = field.operator === 'LIKE' ? " ESCAPE '\\'" : '';
-  // "field" (see AttributeField) is inserted into the SQL verbatim — no escaping, no
-  // alias qualification. Quoting/qualification, if needed, is the caller's responsibility.
-  // The value is already lowercased by the validator when caseSensitive is false, so
-  // only the column needs LOWER() here.
-  const column = caseSensitive ? field.field : `LOWER(${field.field})`;
-  const condition = `${column} ${field.operator} :${parameterName}${escapeClause}`;
-  const parameters = { [parameterName]: field.value };
-
-  if (combinator === 'and') {
-    builder.andWhere(condition, parameters);
-  } else {
-    builder.orWhere(condition, parameters);
-  }
+  applyWhere({ builder, combinator, condition: sql, parameters });
 }

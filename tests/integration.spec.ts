@@ -40,6 +40,10 @@ const uuidAttributes: AttributeMap = {
   id: { type: 'uuid' },
 };
 
+const nullAttributes: AttributeMap = {
+  assigned: { type: 'null', isNull: ['no'], isNotNull: ['yes'], fields: ['assignedTo'] },
+};
+
 const ProductRepository = AppDataSource.getRepository(ProductEntity);
 
 beforeAll(async () => {
@@ -168,18 +172,94 @@ describe('search: wildcards', () => {
     expect(products.map((product) => product.name)).toEqual([match.name]);
   });
 
-  it('rejects wildcards combined with ordering operators', () => {
-    expect(() => search({ repository: ProductRepository, query: 'name:>Pet*', attributes })).toThrow(SearchCopError);
+  it('treats "*" as a plain literal character with ordering operators — no wildcard interpretation', async () => {
+    const match = await createProduct({ name: 'Pets' });
+
+    await createProduct({ name: 'Pet' });
+
+    const products = await search({ repository: ProductRepository, query: 'name:>Pet*', attributes }).getMany();
+
+    expect(products.map((product) => product.name)).toEqual([match.name]);
+  });
+});
+
+describe('search: escaped wildcards ("\\*")', () => {
+  it('matches a literal "*" via "\\*", without treating it as a wildcard', async () => {
+    const match = await createProduct({ name: 'Name*' });
+
+    await createProduct({ name: 'Name' });
+    await createProduct({ name: 'NameOther' });
+
+    const products = await search({ repository: ProductRepository, query: 'name:Name\\*', attributes }).getMany();
+
+    expect(products.map((product) => product.name)).toEqual([match.name]);
+  });
+
+  it('a real wildcard in the same position matches every value with that prefix, unlike the escaped form', async () => {
+    const first = await createProduct({ name: 'Name' });
+    const second = await createProduct({ name: 'Name*' });
+
+    const products = await search({ repository: ProductRepository, query: 'name:Name*', attributes }).getMany();
+
+    expect(products.map((product) => product.name).sort()).toEqual([first.name, second.name].sort());
+  });
+
+  it('rejects a real "*" that is not at the start/end of the value', () => {
+    expect(() => search({ repository: ProductRepository, query: 'name:Name*Other', attributes })).toThrow(SearchCopError);
+  });
+});
+
+describe('search: "wildcards" option (implicit contains matching)', () => {
+  const wildcardOptionAttributes: AttributeMap = { name: { type: 'string', wildcards: true } };
+
+  it('matches a bare-colon value anywhere in the field, without an explicit "*"', async () => {
+    const match = await createProduct({ name: 'First Name' });
+
+    await createProduct({ name: 'other' });
+
+    const products = await search({ repository: ProductRepository, query: 'name:Name', attributes: wildcardOptionAttributes }).getMany();
+
+    expect(products.map((product) => product.name)).toEqual([match.name]);
+  });
+
+  it('an explicit "=" still requires an exact match', async () => {
+    const match = await createProduct({ name: 'Name' });
+
+    await createProduct({ name: 'First Name' });
+
+    const products = await search({ repository: ProductRepository, query: 'name:=Name', attributes: wildcardOptionAttributes }).getMany();
+
+    expect(products.map((product) => product.name)).toEqual([match.name]);
+  });
+
+  it('applies to a bare term against "_all" too, since bare terms are ":" as well', async () => {
+    const matchesByName = await createProduct({ name: 'First Name', description: 'other' });
+    const matchesByDescription = await createProduct({ name: 'other', description: 'Second Name' });
+
+    await createProduct({ name: 'other', description: 'other' });
+
+    const products = await search({
+      repository: ProductRepository,
+      query: 'Name',
+      attributes: { _all: { type: 'string', fields: ['name', 'description'], wildcards: true } },
+    }).getMany();
+
+    expect(products.map((product) => product.name).sort()).toEqual([matchesByName.name, matchesByDescription.name].sort());
   });
 });
 
 describe('search: case sensitivity', () => {
-  it('is case-sensitive by default: a differently-cased value does not match', async () => {
-    await createProduct({ name: 'FRED' });
+  // Known limitation: every bare-colon string predicate compiles to LIKE (see resolveValue
+  // in validator.ts), and SQLite's LIKE operator is ASCII case-insensitive by default
+  // regardless of collation — so "caseSensitive: true" (the default) can't actually be
+  // enforced here on SQLite. Fixing this needs a SQLite-specific construct in the compiler
+  // (e.g. GLOB, or PRAGMA case_sensitive_like); tracked separately from this behavior.
+  it('is case-sensitive by default in principle, but SQLite\'s LIKE ignores case regardless', async () => {
+    const match = await createProduct({ name: 'FRED' });
 
     const products = await search({ repository: ProductRepository, query: 'name:fred', attributes }).getMany();
 
-    expect(products).toEqual([]);
+    expect(products.map((product) => product.name)).toEqual([match.name]);
   });
 
   it('matches regardless of case when the attribute is declared case-insensitive', async () => {
@@ -216,8 +296,12 @@ describe('search: multi-field attributes', () => {
 });
 
 describe('search: default field ("_all")', () => {
-  it('rejects a bare query when "_all" is not configured', () => {
-    expect(() => search({ repository: ProductRepository, query: 'Fred', attributes })).toThrow(SearchCopError);
+  it('returns no results for a bare query when "_all" is not configured, instead of erroring', async () => {
+    await createProduct({});
+
+    const products = await search({ repository: ProductRepository, query: 'Fred', attributes }).getMany();
+
+    expect(products).toEqual([]);
   });
 
   it('matches a bare query against any configured "_all" field', async () => {
@@ -304,6 +388,28 @@ describe('search: unparseable values never error, for any attribute — not just
   });
 });
 
+describe('search: "null" attributes', () => {
+  it('matches rows where the underlying field is null', async () => {
+    const match = await createProduct({ assignedTo: null });
+
+    await createProduct({ assignedTo: 'Fred' });
+
+    const products = await search({ repository: ProductRepository, query: 'assigned:no', attributes: nullAttributes }).getMany();
+
+    expect(products.map((product) => product.name)).toEqual([match.name]);
+  });
+
+  it('matches rows where the underlying field is not null', async () => {
+    await createProduct({ assignedTo: null });
+
+    const match = await createProduct({ assignedTo: 'Fred' });
+
+    const products = await search({ repository: ProductRepository, query: 'assigned:yes', attributes: nullAttributes }).getMany();
+
+    expect(products.map((product) => product.name)).toEqual([match.name]);
+  });
+});
+
 describe('search: negation (NOT)', () => {
   it('negates a single predicate', async () => {
     const match = await createProduct({ status: 'offline' });
@@ -358,10 +464,56 @@ describe('search: negation (NOT)', () => {
     expect(products.map((product) => product.name)).toEqual([match.name]);
   });
 
+  it('does not drop a row whose non-matching field is NULL — a NULL column is never "Name" either', async () => {
+    // Regression test: SQL's three-valued logic means "NOT(name = 'Name' OR assignedTo =
+    // 'Name')" naively evaluates to NULL (not true) for a row where assignedTo IS NULL and
+    // name doesn't match, silently dropping it from the results instead of including it.
+    const nullableMultiFieldAttributes: AttributeMap = { search: { type: 'string', fields: ['name', 'assignedTo'] } };
+
+    const match = await createProduct({ name: 'other', assignedTo: null });
+
+    await createProduct({ name: 'Name', assignedTo: null });
+    await createProduct({ name: 'other', assignedTo: 'Name' });
+
+    const products = await search({
+      repository: ProductRepository,
+      query: 'NOT search:Name',
+      attributes: nullableMultiFieldAttributes,
+    }).getMany();
+
+    expect(products.map((product) => product.name)).toEqual([match.name]);
+  });
+
+  it('stays NULL-safe through double negation too', async () => {
+    const nullableMultiFieldAttributes: AttributeMap = { search: { type: 'string', fields: ['name', 'assignedTo'] } };
+
+    const match = await createProduct({ name: 'Name', assignedTo: null });
+
+    await createProduct({ name: 'other', assignedTo: null });
+
+    const products = await search({
+      repository: ProductRepository,
+      query: 'NOT NOT search:Name',
+      attributes: nullableMultiFieldAttributes,
+    }).getMany();
+
+    expect(products.map((product) => product.name)).toEqual([match.name]);
+  });
+
   it('negating an unparseable value matches everything, since the un-negated predicate matched nothing', async () => {
     const match = await createProduct({});
 
     const products = await search({ repository: ProductRepository, query: 'NOT id:foo', attributes: uuidAttributes }).getMany();
+
+    expect(products.map((product) => product.name)).toEqual([match.name]);
+  });
+
+  it('"-" is shorthand for "NOT", including on a bare term against "_all"', async () => {
+    const match = await createProduct({ status: 'offline' });
+
+    await createProduct({ status: 'online' });
+
+    const products = await search({ repository: ProductRepository, query: '-status:online', attributes }).getMany();
 
     expect(products.map((product) => product.name)).toEqual([match.name]);
   });

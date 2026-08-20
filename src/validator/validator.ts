@@ -1,32 +1,38 @@
 import { validate as isUuid } from 'uuid';
 import type { Expression, Operator, PredicateExpression } from '../ast/types.js';
-import type { AttributeDefinition, AttributeField, AttributeMap } from '../attributes/types.js';
+import type { AttributeDefinition, AttributeField, AttributeMap, NullAttributeDefinition } from '../attributes/types.js';
+import { LIKE_ESCAPE_CHARACTER } from './types.js';
 import type { ValidatedExpression, ValidatedField, ValidatedOperator, ValidatedPredicate, ValidatedValue } from './types.js';
 import { SearchCopError } from '../errors/errors.js';
+import { DEFAULT_FIELD } from '../parser/parser.js';
 
 const OPERATORS_BY_TYPE: Record<AttributeDefinition['type'], Operator[]> = {
-  string: ['=', '>', '>=', '<', '<='],
-  number: ['=', '>', '>=', '<', '<='],
-  boolean: ['='],
-  date: ['=', '>', '>=', '<', '<='],
-  datetime: ['=', '>', '>=', '<', '<='],
-  enum: ['='],
-  uuid: ['='],
+  string: [':', '=', '>', '>=', '<', '<='],
+  number: [':', '=', '>', '>=', '<', '<='],
+  boolean: [':', '='],
+  date: [':', '=', '>', '>=', '<', '<='],
+  datetime: [':', '=', '>', '>=', '<', '<='],
+  enum: [':', '='],
+  uuid: [':', '='],
+  null: [':', '='],
 };
 
-/**
- * Date-only values (and datetime values without an explicit offset) are interpreted as UTC,
- * not the host machine's local timezone.
- */
+function isEqualityOperator(operator: Operator): boolean {
+  return operator === ':' || operator === '=';
+}
+
+// "false" and "'lower'" are the same fold function; "false" is kept for compatibility.
+function foldCase({ value, caseSensitive }: { value: string, caseSensitive: boolean | 'lower' | 'upper' }): string {
+  if (caseSensitive === true) return value;
+
+  return caseSensitive === 'upper' ? value.toUpperCase() : value.toLowerCase();
+}
+
+// Dates with no explicit offset are interpreted as UTC, not local time.
 const DATE_ONLY = /^(\d{4})-(\d{2})-(\d{2})$/;
 const DATE_TIME = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?(Z|[+-]\d{2}:\d{2})?$/;
 
-export interface ValidateOptions {
-  expression: Expression;
-  attributes: AttributeMap;
-}
-
-export function validate({ expression, attributes }: ValidateOptions): ValidatedExpression {
+export function validate({ expression, attributes }: { expression: Expression, attributes: AttributeMap }): ValidatedExpression {
   switch (expression.type) {
     case 'and':
       return { type: 'and', children: expression.children.map((child) => validate({ expression: child, attributes })) };
@@ -38,14 +44,18 @@ export function validate({ expression, attributes }: ValidateOptions): Validated
       return { type: 'not', child: validate({ expression: expression.child, attributes }) };
 
     case 'predicate':
-      return validatePredicate(expression, attributes);
+      return validatePredicate({ predicate: expression, attributes });
   }
 }
 
-function validatePredicate(predicate: PredicateExpression, attributes: AttributeMap): ValidatedPredicate {
+function validatePredicate({ predicate, attributes }: { predicate: PredicateExpression, attributes: AttributeMap }): ValidatedPredicate {
   const attribute = attributes[predicate.field];
 
   if (!Object.hasOwn(attributes, predicate.field) || !attribute) {
+    if (predicate.field === DEFAULT_FIELD) {
+      return { type: 'predicate', fields: [{ alwaysFalse: true }], position: predicate.position };
+    }
+
     throw new SearchCopError('UNKNOWN_ATTRIBUTE', `Unknown search attribute "${predicate.field}".`, predicate.position);
   }
 
@@ -59,7 +69,7 @@ function validatePredicate(predicate: PredicateExpression, attributes: Attribute
     );
   }
 
-  if (attribute.fields?.length && attribute.fields.length > 1 && predicate.operator !== '=') {
+  if (attribute.fields?.length && attribute.fields.length > 1 && !isEqualityOperator(predicate.operator)) {
     throw new SearchCopError(
       'INVALID_OPERATOR',
       `Multi-field attributes only support "=", got "${predicate.operator}" for attribute "${predicate.field}".`,
@@ -67,84 +77,128 @@ function validatePredicate(predicate: PredicateExpression, attributes: Attribute
     );
   }
 
-  const isWildcard = attribute.type === 'string' && predicate.value.includes('*');
-
-  if (isWildcard && predicate.operator !== '=') {
-    throw new SearchCopError(
-      'INVALID_OPERATOR',
-      `Wildcards ("*") are only supported with "=", got "${predicate.operator}" for attribute "${predicate.field}".`,
-      predicate.position,
-    );
-  }
-
-  const caseSensitive = attribute.type === 'string' ? attribute.caseSensitive ?? true : true;
   const entries = attribute.fields?.length ? attribute.fields : [predicate.field];
 
   return {
     type: 'predicate',
-    fields: entries.map((entry) => resolveField(entry, predicate, attribute, isWildcard)),
-    caseSensitive,
+    fields: entries.map((entry) => resolveField({ entry, predicate, attribute })),
     position: predicate.position,
   };
 }
 
-function resolveField(
-  entry: AttributeField,
-  predicate: PredicateExpression,
-  attribute: AttributeDefinition,
-  isWildcard: boolean,
-): ValidatedField {
-  if (typeof entry === 'string') {
-    return resolveColumn(entry, predicate, attribute, isWildcard);
-  }
+function hasWildcard(value: string): boolean {
+  let found = false;
 
-  // Field-level type override: validated independently against its own declared type,
-  // ignoring the outer attribute entirely. A wildcard only carries over if this field
-  // is itself "string" — every other type simply can't match a wildcarded value.
-  const { field, ...definition } = entry;
+  value.replace(/\\.|\*/g, (match) => {
+    if (match === '*') found = true;
 
-  return resolveColumn(field, predicate, definition, isWildcard && definition.type === 'string');
+    return match;
+  });
+
+  return found;
 }
 
-function resolveColumn(field: string, predicate: PredicateExpression, definition: AttributeDefinition, isWildcard: boolean): ValidatedField {
-  const resolved = resolveValue(predicate.value, predicate.operator, definition, isWildcard);
+function resolveField(
+  { entry, predicate, attribute }:
+  { entry: AttributeField, predicate: PredicateExpression, attribute: AttributeDefinition }
+): ValidatedField {
+
+  if (typeof entry === 'string') {
+    return resolveColumn({ field: entry, predicate, definition: attribute });
+  }
+
+  const { field, ...definition } = entry;
+
+  return resolveColumn({ field, predicate, definition });
+}
+
+function resolveColumn(
+  { field, predicate, definition }:
+  { field: string, predicate: PredicateExpression, definition: AttributeDefinition }
+): ValidatedField {
+  const resolved = resolveValue({ predicate, definition });
 
   return resolved === null ? { alwaysFalse: true } : { field, ...resolved };
 }
 
 function resolveValue(
-  rawValue: string,
-  operator: Operator,
-  definition: AttributeDefinition,
-  isWildcard: boolean,
-): { value: ValidatedValue; operator: ValidatedOperator } | null {
-  if (isWildcard) {
-    const pattern = toLikePattern(rawValue);
-    const caseSensitive = definition.type === 'string' ? definition.caseSensitive ?? true : true;
+  { predicate, definition }:
+  { predicate: PredicateExpression, definition: AttributeDefinition }
+):
+  | { value: ValidatedValue; operator: ValidatedOperator; caseSensitive: boolean | 'lower' | 'upper' }
+  | { operator: 'IS NULL' | 'IS NOT NULL' }
+  | null {
+  const { value: rawValue, operator } = predicate;
 
-    return { value: caseSensitive ? pattern : pattern.toLowerCase(), operator: 'LIKE' };
+  const caseSensitive = definition.type === 'string' ? definition.caseSensitive ?? true : true;
+
+  if (definition.type === 'string' && operator === ':') {
+    const pattern = toLikePattern({
+      value: rawValue,
+      leftWildcard: definition.wildcards === true || definition.leftWildcard === true,
+      rightWildcard: definition.wildcards === true || definition.rightWildcard === true,
+      predicate,
+    });
+
+    return { value: foldCase({ value: pattern, caseSensitive }), operator: 'LIKE', caseSensitive };
   }
 
+  // A field-level override may declare a stricter type than the outer attribute, whose
+  // operator was only validated against the outer type.
   if (!OPERATORS_BY_TYPE[definition.type].includes(operator)) {
     return null;
   }
 
+  if (definition.type === 'null') {
+    return resolveNull(rawValue, definition);
+  }
+
   const value = convertValue(rawValue, definition);
 
-  return value === null ? null : { value, operator };
+  return value === null ? null : { value, operator: operator === ':' ? '=' : operator, caseSensitive };
 }
 
-// Escapes existing "\", "%", and "_" so they match literally, then turns the DSL's
-// "*" wildcard into the LIKE wildcard "%". Order matters: escaping runs first so the
-// "%" introduced by "*" is never itself escaped.
-function toLikePattern(value: string): string {
-  return value.replace(/[\\%_]/g, (char) => `\\${char}`).replace(/\*/g, '%');
+// "*" -> "%", "\*" -> a literal "*", everything else untouched. A bare "*" not at the
+// start/end of "value" is a malformed wildcard attempt and throws.
+function replaceWildcards({ value, predicate }: { value: string, predicate: PredicateExpression }): string {
+  return value.replace(/\\.|\*/g, (match, offset: number, fullString: string) => {
+    if (match === '*' && offset !== 0 && offset !== fullString.length - 1) {
+      throw new SearchCopError(
+        'INVALID_WILDCARD',
+        `"*" is only valid at the start and/or end of a value, got "${value}" for attribute "${predicate.field}".`,
+        predicate.position,
+      );
+    }
+
+    if (match === '*') return '%';
+
+    return match.replace(/^\\/, '');
+  });
 }
 
-function convertValue(value: string, definition: AttributeDefinition): ValidatedValue | null {
+function toLikePattern(
+  { value, leftWildcard, rightWildcard, predicate }:
+  { value: string, leftWildcard: boolean, rightWildcard: boolean, predicate: PredicateExpression }
+): string {
+  const escaped = value.replace(new RegExp(`[${LIKE_ESCAPE_CHARACTER}%_]`, 'g'), (char) => `${LIKE_ESCAPE_CHARACTER}${char}`);
+  const resolved = replaceWildcards({ value: escaped, predicate });
+
+  if (hasWildcard(escaped)) return resolved;
+
+  return `${leftWildcard ? '%' : ''}${resolved}${rightWildcard ? '%' : ''}`;
+}
+
+function resolveNull(rawValue: string, definition: NullAttributeDefinition): { operator: 'IS NULL' | 'IS NOT NULL' } | null {
+  if (definition.isNull.includes(rawValue)) return { operator: 'IS NULL' };
+  if (definition.isNotNull.includes(rawValue)) return { operator: 'IS NOT NULL' };
+
+  return null;
+}
+
+function convertValue(value: string, definition: Exclude<AttributeDefinition, NullAttributeDefinition>): ValidatedValue | null {
   switch (definition.type) {
     case 'string':
-      return definition.caseSensitive === false ? value.toLowerCase() : value;
+      return foldCase({ value, caseSensitive: definition.caseSensitive ?? true });
 
     case 'number':
       return convertNumber(value);
@@ -177,8 +231,12 @@ function convertBoolean(value: string): boolean | null {
   return null;
 }
 
-function convertEnum(value: string, values: string[]): string | null {
-  return values.includes(value) ? value : null;
+function convertEnum(value: string, values: string[] | Record<string, string>): string | null {
+  if (Array.isArray(values)) {
+    return values.includes(value) ? value : null;
+  }
+
+  return Object.hasOwn(values, value) ? values[value] ?? null : null;
 }
 
 function convertUuidValue(value: string): string | null {

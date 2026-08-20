@@ -4,6 +4,8 @@ import { parse } from '../../src/parser/parser.js';
 import { validate } from '../../src/validator/validator.js';
 import { compile, compileCondition } from '../../src/compiler/typeorm.js';
 import { AppDataSource } from '../support/AppDataSource.js';
+import { SearchCopError } from '../../src/errors/errors.js';
+import { tryCatch } from '../../src/utils/tryCatch.js';
 import type { AttributeMap } from '../../src/attributes/types.js';
 import { ProductRepository } from '../support/ProductRepository.js';
 
@@ -39,6 +41,14 @@ const typedFieldAttributes: AttributeMap = {
 
 const uuidAttributes: AttributeMap = {
   id: { type: 'uuid' },
+};
+
+const nullAttributes: AttributeMap = {
+  assigned: { type: 'null', isNull: ['false', 'no'], isNotNull: ['true', 'yes'] },
+};
+
+const wildcardOptionAttributes: AttributeMap = {
+  name: { type: 'string', wildcards: true },
 };
 
 beforeAll(async () => {
@@ -120,14 +130,67 @@ describe('compile: wildcards', () => {
   it('compiles a wildcard equality predicate to LIKE with an ESCAPE clause', () => {
     const [sql, params] = compileQuery({ query: 'name:Pet*' }).getQueryAndParameters();
 
-    expect(sql).toContain(`name LIKE ? ESCAPE '\\'`);
+    expect(sql).toContain(`name LIKE ? ESCAPE '!'`);
     expect(params).toEqual(['Pet%']);
   });
 
   it('escapes literal "%" and "_" so they are not treated as LIKE wildcards', () => {
     const [, params] = compileQuery({ query: 'name:100%_off*' }).getQueryAndParameters();
 
-    expect(params).toEqual(['100\\%\\_off%']);
+    expect(params).toEqual(['100!%!_off%']);
+  });
+});
+
+describe('compile: escaped wildcards ("\\*")', () => {
+  it('compiles an escaped-only "\\*" to a literal "*", not a wildcard', () => {
+    const [sql, params] = compileQuery({ query: 'name:Name\\*' }).getQueryAndParameters();
+
+    expect(sql).toContain(`name LIKE ? ESCAPE '!'`);
+    expect(params).toEqual(['Name*']);
+  });
+
+  it('compiles a real wildcard combined with an escaped "\\*" to a LIKE pattern with a literal "*" in it', () => {
+    const [sql, params] = compileQuery({ query: 'name:*Name\\*Other' }).getQueryAndParameters();
+
+    expect(sql).toContain(`name LIKE ? ESCAPE '!'`);
+    expect(params).toEqual(['%Name*Other']);
+  });
+
+  it('throws when compiling a real "*" that is not at the start/end of the value', () => {
+    const [error] = tryCatch(() => compileQuery({ query: 'name:Name*Other' }));
+
+    expect(error).toBeInstanceOf(SearchCopError);
+    expect((error as SearchCopError).code).toBe('INVALID_WILDCARD');
+  });
+});
+
+describe('compile: "wildcards" option (implicit contains matching)', () => {
+  it('compiles a bare-colon value to a "%...%" LIKE pattern', () => {
+    const [sql, params] = compileQuery({ query: 'name:Name', attributeMap: wildcardOptionAttributes }).getQueryAndParameters();
+
+    expect(sql).toContain(`name LIKE ? ESCAPE '!'`);
+    expect(params).toEqual(['%Name%']);
+  });
+
+  it('compiles an explicit "=" value to a plain equality, not LIKE', () => {
+    const [sql, params] = compileQuery({ query: 'name:=Name', attributeMap: wildcardOptionAttributes }).getQueryAndParameters();
+
+    expect(sql).toContain('name = ?');
+    expect(params).toEqual(['Name']);
+  });
+
+  it('"leftWildcard" prefixes the value with "%" only', () => {
+    const leftWildcardAttributes: AttributeMap = { name: { type: 'string', leftWildcard: true } };
+    const [, params] = compileQuery({ query: 'name:Name', attributeMap: leftWildcardAttributes }).getQueryAndParameters();
+
+    expect(params).toEqual(['%Name']);
+  });
+
+  it('"rightWildcard" appends "%" to the value only', () => {
+    const rightWildcardAttributes: AttributeMap = { name: { type: 'string', rightWildcard: true } };
+    const [, params] = compileQuery({ query: 'name:Name', attributeMap: rightWildcardAttributes }).getQueryAndParameters();
+
+    expect(params).toEqual(['Name%']);
   });
 });
 
@@ -135,37 +198,55 @@ describe('compile: case sensitivity', () => {
   it('leaves the column bare for a case-sensitive attribute', () => {
     const [sql] = compileQuery({ query: 'name:Fred' }).getQueryAndParameters();
 
-    expect(sql).toContain('name = ?');
+    expect(sql).toContain(`name LIKE ? ESCAPE '!'`);
     expect(sql).not.toContain('LOWER');
   });
 
   it('wraps the column in LOWER() for a case-insensitive attribute, and lowercases the bound value', () => {
     const [sql, params] = compileQuery({ query: 'name:Fred', attributeMap: caseInsensitiveAttributes }).getQueryAndParameters();
 
-    expect(sql).toContain('LOWER(name) = ?');
+    expect(sql).toContain(`LOWER(name) LIKE ? ESCAPE '!'`);
     expect(params).toEqual(['fred']);
   });
 
   it('wraps the column in LOWER() for a case-insensitive wildcard too', () => {
     const [sql, params] = compileQuery({ query: 'name:Fred*', attributeMap: caseInsensitiveAttributes }).getQueryAndParameters();
 
-    expect(sql).toContain(`LOWER(name) LIKE ? ESCAPE '\\'`);
+    expect(sql).toContain(`LOWER(name) LIKE ? ESCAPE '!'`);
     expect(params).toEqual(['fred%']);
+  });
+
+  it('wraps the column in UPPER() for "caseSensitive: \'upper\'", and uppercases the bound value', () => {
+    const upperCaseAttributes: AttributeMap = { name: { type: 'string', caseSensitive: 'upper' } };
+    const [sql, params] = compileQuery({ query: 'name:Fred', attributeMap: upperCaseAttributes }).getQueryAndParameters();
+
+    expect(sql).toContain(`UPPER(name) LIKE ? ESCAPE '!'`);
+    expect(params).toEqual(['FRED']);
+  });
+
+  it('applies a field-level override\'s own "caseSensitive", independent of the outer attribute\'s', () => {
+    const mixedCaseAttributes: AttributeMap = {
+      search: { type: 'string', fields: ['name', { field: 'description', type: 'string', caseSensitive: false }] },
+    };
+    const [sql, params] = compileQuery({ query: 'search:Fred', attributeMap: mixedCaseAttributes }).getQueryAndParameters();
+
+    expect(sql).toContain(`(name LIKE ? ESCAPE '!' OR LOWER(description) LIKE ? ESCAPE '!')`);
+    expect(params).toEqual(['Fred', 'fred']);
   });
 });
 
 describe('compile: multi-field attributes', () => {
-  it('ORs together each field for "="', () => {
+  it('ORs together each field for a bare-colon value', () => {
     const [sql, params] = compileQuery({ query: 'search:Fred', attributeMap: multiFieldAttributes }).getQueryAndParameters();
 
-    expect(sql).toContain('(name = ? OR description = ?)');
+    expect(sql).toContain(`(name LIKE ? ESCAPE '!' OR description LIKE ? ESCAPE '!')`);
     expect(params).toEqual(['Fred', 'Fred']);
   });
 
   it('ORs together each field for a wildcard match', () => {
     const [sql, params] = compileQuery({ query: 'search:Fred*', attributeMap: multiFieldAttributes }).getQueryAndParameters();
 
-    expect(sql).toContain(`(name LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\')`);
+    expect(sql).toContain(`(name LIKE ? ESCAPE '!' OR description LIKE ? ESCAPE '!')`);
     expect(params).toEqual(['Fred%', 'Fred%']);
   });
 
@@ -186,14 +267,14 @@ describe('compile: multi-field attributes', () => {
   it('inserts a "raw" field verbatim, unescaped and unqualified, leaving other fields bare', () => {
     const [sql, params] = compileQuery({ query: 'search:Fred', attributeMap: rawFieldAttributes }).getQueryAndParameters();
 
-    expect(sql).toContain('(name = ? OR CAST(price AS TEXT) = ?)');
+    expect(sql).toContain(`(name LIKE ? ESCAPE '!' OR CAST(price AS TEXT) LIKE ? ESCAPE '!')`);
     expect(params).toEqual(['Fred', 'Fred']);
   });
 
   it('applies a "raw" field under a wildcard match too', () => {
     const [sql, params] = compileQuery({ query: 'search:Fred*', attributeMap: rawFieldAttributes }).getQueryAndParameters();
 
-    expect(sql).toContain(`CAST(price AS TEXT) LIKE ? ESCAPE '\\'`);
+    expect(sql).toContain(`CAST(price AS TEXT) LIKE ? ESCAPE '!'`);
     expect(params).toEqual(['Fred%', 'Fred%']);
   });
 });
@@ -202,7 +283,7 @@ describe('compile: field-level type overrides', () => {
   it('converts the overridden field using its own type', () => {
     const [sql, params] = compileQuery({ query: 'search:100', attributeMap: typedFieldAttributes }).getQueryAndParameters();
 
-    expect(sql).toContain('name = ?');
+    expect(sql).toContain(`name LIKE ? ESCAPE '!'`);
     // The sqlite driver inlines numeric parameters as literals rather than binding them.
     expect(sql).toContain('price = 100');
     expect(params).toEqual(['100']);
@@ -211,7 +292,7 @@ describe('compile: field-level type overrides', () => {
   it('compiles a non-matching overridden field to an unconditional "1 = 0", not an error', () => {
     const [sql, params] = compileQuery({ query: 'search:Fred', attributeMap: typedFieldAttributes }).getQueryAndParameters();
 
-    expect(sql).toContain('(name = ? OR 1 = 0)');
+    expect(sql).toContain(`(name LIKE ? ESCAPE '!' OR 1 = 0)`);
     expect(params).toEqual(['Fred']);
   });
 });
@@ -235,18 +316,41 @@ describe('compile: unparseable values compile to "1 = 0" for any attribute, not 
   });
 });
 
+describe('compile: "null" attributes', () => {
+  it('compiles an "isNull" value to "IS NULL", with no bound parameter', () => {
+    const [sql, params] = compileQuery({ query: 'assigned:no', attributeMap: nullAttributes }).getQueryAndParameters();
+
+    expect(sql).toContain('assigned IS NULL');
+    expect(params).toEqual([]);
+  });
+
+  it('compiles an "isNotNull" value to "IS NOT NULL", with no bound parameter', () => {
+    const [sql, params] = compileQuery({ query: 'assigned:yes', attributeMap: nullAttributes }).getQueryAndParameters();
+
+    expect(sql).toContain('assigned IS NOT NULL');
+    expect(params).toEqual([]);
+  });
+
+  it('compiles an unknown value to an unconditional "1 = 0", not an error', () => {
+    const [sql, params] = compileQuery({ query: 'assigned:maybe', attributeMap: nullAttributes }).getQueryAndParameters();
+
+    expect(sql).toContain('1 = 0');
+    expect(params).toEqual([]);
+  });
+});
+
 describe('compile: default field ("_all")', () => {
   it('compiles a bare query against "_all", OR-ing its configured fields', () => {
     const [sql, params] = compileQuery({ query: 'Fred', attributeMap: defaultFieldAttributes }).getQueryAndParameters();
 
-    expect(sql).toContain('(name = ? OR description = ?)');
+    expect(sql).toContain(`(name LIKE ? ESCAPE '!' OR description LIKE ? ESCAPE '!')`);
     expect(params).toEqual(['Fred', 'Fred']);
   });
 
   it('ANDs multiple bare terms together (free-text search)', () => {
     const [sql, params] = compileQuery({ query: 'red shoes', attributeMap: defaultFieldAttributes }).getQueryAndParameters();
 
-    expect(sql).toMatch(/\(name = \? OR description = \?\) AND \(name = \? OR description = \?\)/);
+    expect(sql).toMatch(/\(name LIKE \? ESCAPE '!' OR description LIKE \? ESCAPE '!'\) AND \(name LIKE \? ESCAPE '!' OR description LIKE \? ESCAPE '!'\)/);
     expect(params).toEqual(['red', 'red', 'shoes', 'shoes']);
   });
 });
@@ -270,44 +374,48 @@ describe('compile: alias', () => {
 });
 
 describe('compile: negation (NOT)', () => {
-  it('wraps a negated predicate in NOT(...)', () => {
+  // NOT's content is rendered to a single string and wrapped in exactly one
+  // "COALESCE(..., FALSE)" — see src/compiler/typeorm.ts's renderNegated — so a NULL
+  // column can't make the un-negated expression evaluate to NULL/UNKNOWN, which would
+  // otherwise make SQL's NOT(...) also NULL and silently drop that row from the results.
+  it('wraps a negated predicate in NOT(COALESCE(..., FALSE))', () => {
     const [sql, params] = compileQuery({ query: 'NOT status:online' }).getQueryAndParameters();
 
-    expect(sql).toContain('NOT(status = ?)');
+    expect(sql).toContain('NOT(COALESCE((status = ?), FALSE))');
     expect(params).toEqual(['online']);
   });
 
-  it('wraps a negated group in NOT(...), preserving the AND/OR structure inside', () => {
+  it('wraps a negated group in NOT(COALESCE(..., FALSE)), preserving the AND/OR structure inside', () => {
     const [sql, params] = compileQuery({ query: 'NOT (status:online OR status:pending)' }).getQueryAndParameters();
 
-    expect(sql).toContain('NOT((status = ? OR status = ?))');
+    expect(sql).toContain('NOT(COALESCE((status = ? OR status = ?), FALSE))');
     expect(params).toEqual(['online', 'pending']);
   });
 
   it('combines a negated term with a non-negated one via implicit AND', () => {
     const [sql, params] = compileQuery({ query: 'NOT status:online price:>100' }).getQueryAndParameters();
 
-    expect(sql).toMatch(/NOT\(status = \?\) AND .*price > 100/);
+    expect(sql).toMatch(/NOT\(COALESCE\(\(status = \?\), FALSE\)\) AND .*price > 100/);
     expect(params).toEqual(['online']);
   });
 
-  it('double negation compiles to nested NOT(NOT(...))', () => {
+  it('double negation compiles to nested NOT(COALESCE(...))', () => {
     const [sql] = compileQuery({ query: 'NOT NOT status:online' }).getQueryAndParameters();
 
-    expect(sql).toContain('NOT(NOT(status = ?))');
+    expect(sql).toContain('NOT(COALESCE((NOT(COALESCE((status = ?), FALSE))), FALSE))');
   });
 
   it('negates a multi-field OR group as a whole, not each field independently', () => {
     const [sql, params] = compileQuery({ query: 'NOT search:Fred', attributeMap: multiFieldAttributes }).getQueryAndParameters();
 
-    expect(sql).toContain('NOT((name = ? OR description = ?))');
+    expect(sql).toContain(`NOT(COALESCE(((name LIKE ? ESCAPE '!' OR description LIKE ? ESCAPE '!')), FALSE))`);
     expect(params).toEqual(['Fred', 'Fred']);
   });
 
-  it('negating an unparseable ("1 = 0") predicate compiles to "NOT(1 = 0)" — i.e. always true', () => {
+  it('negating an unparseable ("1 = 0") predicate compiles to an unconditional true', () => {
     const [sql, params] = compileQuery({ query: 'NOT id:foo', attributeMap: uuidAttributes }).getQueryAndParameters();
 
-    expect(sql).toContain('NOT(1 = 0)');
+    expect(sql).toContain('NOT(COALESCE((1 = 0), FALSE))');
     expect(params).toEqual([]);
   });
 });

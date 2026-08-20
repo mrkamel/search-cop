@@ -1,4 +1,5 @@
-export type Operator = '=' | '>' | '>=' | '<' | '<=';
+// ":" is bare-colon shorthand for "=", tracked separately for the "wildcards" option.
+export type Operator = ':' | '=' | '>' | '>=' | '<' | '<=';
 
 export interface PredicateExpression {
   type: 'predicate';

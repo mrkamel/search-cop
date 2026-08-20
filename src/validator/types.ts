@@ -2,21 +2,19 @@ import type { Operator } from '../ast/types.js';
 
 export type ValidatedValue = string | number | boolean | Date;
 
-// LIKE never comes from the parser — the validator produces it from "=" predicates
-// on string attributes whose value contains a "*" wildcard.
-export type ValidatedOperator = Operator | 'LIKE';
+// Not "\": MySQL treats it as a string-escape char, breaking the literal there.
+export const LIKE_ESCAPE_CHARACTER = '!';
 
-// A value that doesn't fit its (possibly field-overridden) type never errors — it
-// simply can never match, compiling to an unconditionally false condition instead
-// of a real comparison. "field" is inserted into the SQL verbatim — see AttributeField.
-export type ValidatedField = { alwaysFalse: true } | { field: string; value: ValidatedValue; operator: ValidatedOperator };
+export type ValidatedOperator = Exclude<Operator, ':'> | 'LIKE';
+
+export type ValidatedField =
+  | { alwaysFalse: true }
+  | { field: string, value: ValidatedValue, operator: ValidatedOperator, caseSensitive: boolean | 'lower' | 'upper' }
+  | { field: string, operator: 'IS NULL' | 'IS NOT NULL' };
 
 export interface ValidatedPredicate {
   type: 'predicate';
-  /** Always non-empty. More than one entry means the fields are OR'd together. */
   fields: ValidatedField[];
-  /** When false, the compiler matches each field's value case-insensitively. */
-  caseSensitive: boolean;
   position?: number;
 }
 

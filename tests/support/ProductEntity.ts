@@ -24,4 +24,7 @@ export class ProductEntity {
 
   @Column({ type: 'datetime' })
   createdAt!: Date;
+
+  @Column({ type: 'varchar', nullable: true })
+  assignedTo!: string | null;
 }
