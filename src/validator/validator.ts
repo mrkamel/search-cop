@@ -171,9 +171,8 @@ function replaceWildcards({ value, predicate }: { value: string, predicate: Pred
     }
 
     if (match === '*') return '%';
-    if (match === '\\*') return '*';
 
-    return match;
+    return match.replace(/^\\/, '');
   });
 }
 

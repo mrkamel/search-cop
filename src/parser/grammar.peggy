@@ -94,6 +94,7 @@ UnquotedValue
 
 UnquotedChar
   = "\\*" { return '\\*' }
+  / "\\\\" { return '\\\\' }
   / "\\" char:[^\t\n\r ()] { return char }
   / char:[^\t\n\r ()] { return char }
 
@@ -102,6 +103,7 @@ QuotedValue "quoted value"
 
 QuotedChar
   = "\\*" { return '\\*' }
+  / "\\\\" { return '\\\\' }
   / "\\" char:. { return char }
   / !'"' char:. { return char }
 

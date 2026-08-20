@@ -286,6 +286,15 @@ describe('validate: escaped wildcards ("\\*")', () => {
     expect(validateQuery('name:C:\\\\Name\\\\Other*')).toMatchObject({ fields: [{ operator: 'LIKE', value: 'C:\\Name\\Other%' }] });
   });
 
+  // BUG: a resolved literal backslash (from doubling "\\") directly followed by a real "*"
+  // is indistinguishable, once it reaches the validator, from the grammar's own "\*"
+  // escaped-literal-asterisk token — both collapse to the same 2-char "\*" substring. The
+  // trailing "*" here is a genuine wildcard (nothing separates it from the doubled "\\"),
+  // but it gets silently swallowed as a literal "*" instead of becoming "%".
+  it('preserves a real wildcard directly after a doubled "\\\\" (literal backslash), instead of swallowing it as an escaped literal "*"', () => {
+    expect(validateQuery('name:C:\\\\Name\\\\*')).toMatchObject({ fields: [{ operator: 'LIKE', value: 'C:\\Name\\%' }] });
+  });
+
   it('respects "caseSensitive: false" on an escaped-only value', () => {
     expect(validateQuery('nameCaseInsensitive:Name\\*')).toMatchObject({ fields: [{ operator: 'LIKE', value: 'name*' }] });
   });

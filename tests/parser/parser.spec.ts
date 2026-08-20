@@ -46,39 +46,39 @@ describe('parse: operators', () => {
   });
 
   it('parses "*" as a plain value character (wildcard interpretation happens during validation)', () => {
-    expect(stripPosition(parse('name:Pet*'))).toEqual(predicate('name', ':', 'Pet*'));
-    expect(stripPosition(parse('name:*fred'))).toEqual(predicate('name', ':', '*fred'));
+    expect(stripPosition(parse('name:Name*'))).toEqual(predicate('name', ':', 'Name*'));
+    expect(stripPosition(parse('name:*Name'))).toEqual(predicate('name', ':', '*Name'));
   });
 });
 
 describe('parse: unquoted values', () => {
-  it('keeps "\\*" exactly as written (both characters), like quoted values do', () => {
-    expect(stripPosition(parse('name:Pet\\*'))).toEqual(predicate('name', ':', 'Pet\\*'));
+  it('keeps "\\*" exactly as written', () => {
+    expect(stripPosition(parse('name:Name\\*'))).toEqual(predicate('name', ':', 'Name\\*'));
   });
 
-  it('unescapes "\\" followed by any other character, dropping the backslash', () => {
-    expect(stripPosition(parse('name:bla\\mwurst'))).toEqual(predicate('name', ':', 'blamwurst'));
+  it('keeps "\\\\" exactly as written', () => {
+    expect(stripPosition(parse('name:back\\\\slash'))).toEqual(predicate('name', ':', 'back\\\\slash'));
   });
 
-  it('unescapes "\\\\" to a literal backslash, same as quoted values', () => {
-    expect(stripPosition(parse('name:C:\\\\temp'))).toEqual(predicate('name', ':', 'C:\\temp'));
+  it('unescapes "\\" + char to a literal backslash, same as quoted values', () => {
+    expect(stripPosition(parse('name:back\\slash'))).toEqual(predicate('name', ':', 'backslash'));
   });
 
   it('does not let "\\" escape a terminator — whitespace/parens still end the value', () => {
-    expect(stripPosition(parse('name:foo\\ bar'))).toEqual({
+    expect(stripPosition(parse('name:back\\ slash'))).toEqual({
       type: 'and',
-      children: [predicate('name', ':', 'foo\\'), predicate('_all', ':', 'bar')],
+      children: [predicate('name', ':', 'back\\'), predicate('_all', ':', 'slash')],
     });
   });
 });
 
 describe('parse: quoted values', () => {
   it('parses a quoted value containing whitespace', () => {
-    expect(stripPosition(parse('first_name:"foo bar"'))).toEqual(predicate('first_name', ':', 'foo bar'));
+    expect(stripPosition(parse('first_name:"first name"'))).toEqual(predicate('first_name', ':', 'first name'));
   });
 
   it('parses a quoted value containing parentheses', () => {
-    expect(stripPosition(parse('name:"(foo)"'))).toEqual(predicate('name', ':', '(foo)'));
+    expect(stripPosition(parse('name:"(Name)"'))).toEqual(predicate('name', ':', '(Name)'));
   });
 
   it('parses an empty quoted value', () => {
@@ -86,22 +86,30 @@ describe('parse: quoted values', () => {
   });
 
   it('unescapes \\" to a literal quote', () => {
-    expect(stripPosition(parse('name:"foo \\"bar\\" baz"'))).toEqual(predicate('name', ':', 'foo "bar" baz'));
+    expect(stripPosition(parse('name:"abc \\"def\\" ghi"'))).toEqual(predicate('name', ':', 'abc "def" ghi'));
   });
 
-  it('unescapes \\\\ to a literal backslash', () => {
-    expect(stripPosition(parse('name:"back\\\\slash"'))).toEqual(predicate('name', ':', 'back\\slash'));
+  it('keeps \\\\ exactly as written', () => {
+    expect(stripPosition(parse('name:"back\\\\slash"'))).toEqual(predicate('name', ':', 'back\\\\slash'));
+  });
+
+  it('keeps a \\* exactly as written', () => {
+    expect(stripPosition(parse('name:"value\\*"'))).toEqual(predicate('name', ':', 'value\\*'));
+  });
+
+  it('unescapes \\ + char to a literal backslash', () => {
+    expect(stripPosition(parse('name:"back\\slash"'))).toEqual(predicate('name', ':', 'backslash'));
   });
 
   it('combines quoted predicates with AND/OR, including implicit AND', () => {
-    expect(stripPosition(parse('is_active:false OR first_name:"foo bar"'))).toEqual({
+    expect(stripPosition(parse('is_active:false OR first_name:"some name"'))).toEqual({
       type: 'or',
-      children: [predicate('is_active', ':', 'false'), predicate('first_name', ':', 'foo bar')],
+      children: [predicate('is_active', ':', 'false'), predicate('first_name', ':', 'some name')],
     });
 
-    expect(stripPosition(parse('first_name:"foo bar" status:online'))).toEqual({
+    expect(stripPosition(parse('first_name:"some name" status:online'))).toEqual({
       type: 'and',
-      children: [predicate('first_name', ':', 'foo bar'), predicate('status', ':', 'online')],
+      children: [predicate('first_name', ':', 'some name'), predicate('status', ':', 'online')],
     });
   });
 
