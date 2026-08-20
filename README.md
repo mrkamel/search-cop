@@ -111,9 +111,11 @@ price:<=100
 createdAt:>=2026-01-01
 ```
 
-`status:online` and `status:=online` compile identically. The only place they're told
-apart is the `wildcards` option (see [Implicit wildcards](#implicit-wildcards)), which
-only kicks in for the bare `:` shorthand — an explicit `=` always opts out of it.
+For most attribute types, `status:online` and `status:=online` compile identically. For a
+`string` attribute they don't: the bare `:` form always compiles to a `LIKE` predicate (so
+it can support wildcard syntax — see [Wildcards](#wildcards)) and enables the `wildcards`
+option (see [Implicit wildcards](#implicit-wildcards)); an explicit `=` always compiles to
+a plain `=` comparison and opts out of both.
 
 Combine predicates with `AND` / `OR` (case-sensitive — lowercase `and`/`or` are rejected)
 and parentheses. `AND` binds tighter than `OR`:
@@ -167,23 +169,42 @@ string `-test`).
 
 ### Quoted values
 
-Unquoted values end at the first whitespace or parenthesis, so a value containing either
-must be double-quoted. Inside quotes, `\"` and `\\` are unescaped to `"` and `\`:
+Unquoted values end at the first (unescaped) whitespace or parenthesis, so a value
+containing either must be double-quoted:
 
 ```text
 name:"foo bar"
 name:"(foo)"
-name:"foo \"bar\" baz"                   // foo "bar" baz
 ```
+
+`\` escapes the following character the same way in both quoted and unquoted values: `\"`
+unescapes to a literal `"` (only meaningful inside quotes, to embed one without ending the
+value early), `\\` to a literal `\`, and `\*` to a literal `*` (see [Wildcards](#wildcards)
+— the one case that matters outside quotes too). Any other `\<char>` just drops the
+backslash, so a literal backslash needs doubling:
+
+```text
+name:"foo \"bar\" baz"                   // foo "bar" baz
+name:back\\slash                         // back\slash
+name:back\slash                          // backslash (a single "\" is just dropped)
+```
+
+Escaping in an unquoted value can't swallow a terminator — `\` followed by a space or
+parenthesis still ends the value there; quote the value instead if you need one included.
 
 ### Wildcards
 
-A `*` in a `string` attribute's value (with `=`) compiles to a `LIKE` predicate, with `*`
-translated to SQL's `%`. Any literal `%` or `_` in the value is escaped so it's matched
-literally rather than as a `LIKE` wildcard; `\` needs no escaping — it isn't special to
-`LIKE` at all. There's no way to match a literal `*` — every `*` is treated as a wildcard.
-Wildcards are rejected with `>` `>=` `<` `<=`, and don't apply to `enum`/`uuid`/other
-attribute types.
+Wildcard syntax exists only for the bare `:` shorthand on a `string` attribute — every
+explicit operator (`=`, `>`, `>=`, `<`, `<=`) always treats `*` as a plain literal
+character, never a wildcard (see [Query syntax](#query-syntax)). Because of that, `:` on a
+`string` attribute always compiles to a `LIKE` predicate — even when the value has no `*`
+at all — while every explicit operator always compiles to a plain comparison. Wildcards
+don't apply to `enum`/`uuid`/other attribute types.
+
+A `*` translates to SQL's `%`; any literal `%` or `_` in the value is escaped so it's
+matched literally rather than as a `LIKE` wildcard. A bare `*` is only valid at the very
+start and/or end of the value — one anywhere else throws `INVALID_WILDCARD` rather than
+silently falling back to a literal match:
 
 ```text
 name:Pet*                                   // starts with "Pet"
@@ -191,9 +212,17 @@ name:*fred                                  // ends with "fred"
 name:*pet*                                  // contains "pet"
 ```
 
-By default, case-sensitivity of the match depends on the database's `LIKE` collation (e.g.
-Postgres' `LIKE` is case-sensitive; SQLite's is case-insensitive for ASCII by default) — see
-[Case sensitivity](#case-sensitivity) for a portable, explicit alternative.
+Escape a literal `*` with `\*` (see [Quoted values](#quoted-values)):
+
+```text
+name:Pet\*                                  // literal value "Pet*", not a wildcard
+name:*Pet\*Other                            // starts with "Pet*Other" (real wildcard + literal "*")
+```
+
+Because `:` always compiles to `LIKE`, case-sensitivity of *every* bare-colon `string`
+match (wildcarded or not) depends on the database's `LIKE` collation by default (e.g.
+Postgres' `LIKE` is case-sensitive; SQLite's is case-insensitive for ASCII regardless of
+collation) — see [Case sensitivity](#case-sensitivity) for a portable, explicit alternative.
 
 ### Implicit wildcards
 
@@ -253,7 +282,7 @@ attributes: {
 ```
 
 ```text
-name:Fred     // UPPER(name) = 'FRED'
+name:=Fred     // UPPER(name) = 'FRED'
 ```
 
 `caseSensitive: 'lower'` is also accepted, and behaves exactly like `false` — it's just the
@@ -271,8 +300,9 @@ attributes: {
 ```
 
 ```text
-name:Fred          // firstName = 'Fred' OR lastName = 'Fred'
+name:Fred          // (firstName LIKE 'Fred' ...) OR (lastName LIKE 'Fred' ...)
 name:Fred*         // (firstName LIKE 'Fred%' ...) OR (lastName LIKE 'Fred%' ...)
+name:=Fred         // firstName = 'Fred' OR lastName = 'Fred'
 ```
 
 Only `=` is supported (including its wildcard form) — ordering operators (`>` `>=` `<`
@@ -309,7 +339,7 @@ attributes: {
 ```
 
 ```text
-name:Fred     // firstName = 'Fred' OR lastName = 'Fred' OR CAST(id AS TEXT) = 'Fred'
+name:Fred     // (firstName LIKE 'Fred' ...) OR (lastName LIKE 'Fred' ...) OR (CAST(id AS TEXT) LIKE 'Fred' ...)
 ```
 
 `CAST` itself is standard SQL and works identically everywhere, but the type-name argument
@@ -336,7 +366,7 @@ attributes: {
 ```
 
 ```text
-name:Fred                                    // firstName = 'Fred' OR lastName = 'Fred'
+name:Fred                                    // (firstName LIKE 'Fred' ...) OR (lastName LIKE 'Fred' ...)
                                               //   OR (id is skipped: "Fred" isn't a valid uuid)
 name:550e8400-e29b-41d4-a716-446655440000     // ...OR id = '550e8400-e29b-41d4-a716-446655440000'
 ```
@@ -376,10 +406,10 @@ other. Since `AND` is already implicit between predicates, multiple bare terms b
 free-text search — each term ORs across the configured fields, and terms AND together:
 
 ```text
-red shoes             // (name = 'red' OR description = 'red')
-                      //   AND (name = 'shoes' OR description = 'shoes')
+red shoes             // (name LIKE 'red' ... OR description LIKE 'red' ...)
+                      //   AND (name LIKE 'shoes' ... OR description LIKE 'shoes' ...)
 red* shoes*           // same, but with wildcards on each term
-red status:online     // (name = 'red' OR description = 'red') AND status = 'online'
+red status:online     // (name LIKE 'red' ... OR description LIKE 'red' ...) AND status = 'online'
 ```
 
 Unlike any other undeclared field, a bare query never errors when `_all` isn't declared in
@@ -459,6 +489,7 @@ Invalid queries throw a `SearchCopError` with a `code`:
 - `UNKNOWN_ATTRIBUTE` — the field is not declared in `attributes` (except a bare query
   against an undeclared `_all` — see [Default field](#default-field))
 - `INVALID_OPERATOR` — the operator is not supported for the attribute's type (e.g. `status:>online` for an `enum`)
+- `INVALID_WILDCARD` — a bare `*` appears somewhere other than the start/end of a bare-colon `string` value (e.g. `name:Pet*Other`; see [Wildcards](#wildcards))
 
 Note there's no error for a value that doesn't fit its type (an invalid uuid, an unknown
 enum value, ...) — see [Unparseable values never error](#unparseable-values-never-error).

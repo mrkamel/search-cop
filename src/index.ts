@@ -10,7 +10,6 @@ export interface SearchOptions<Entity extends ObjectLiteral> {
   repository: Repository<Entity>;
   query: string;
   attributes: AttributeMap;
-  /** SQL alias used for the entity's table in the generated query. Defaults to the table name. */
   alias?: string;
 }
 
@@ -26,16 +25,6 @@ export interface SearchConditionOptions {
   attributes: AttributeMap;
 }
 
-/**
- * Compiles a query to a standalone `Brackets` where-clause fragment instead of a full
- * query, to merge into a queryBuilder you've already built yourself — with your own
- * joins, alias, and other `where` conditions already in place:
- *
- * ```ts
- * const queryBuilder = repository.createQueryBuilder('product').leftJoinAndSelect('product.author', 'author');
- * queryBuilder.andWhere(searchCondition({ query: 'author.name:joe', attributes }));
- * ```
- */
 export function searchCondition(options: SearchConditionOptions): Brackets {
   const expression = parse(options.query);
   const validated = validate({ expression, attributes: options.attributes });

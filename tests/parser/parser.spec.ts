@@ -51,6 +51,27 @@ describe('parse: operators', () => {
   });
 });
 
+describe('parse: unquoted values', () => {
+  it('keeps "\\*" exactly as written (both characters), like quoted values do', () => {
+    expect(stripPosition(parse('name:Pet\\*'))).toEqual(predicate('name', ':', 'Pet\\*'));
+  });
+
+  it('unescapes "\\" followed by any other character, dropping the backslash', () => {
+    expect(stripPosition(parse('name:bla\\mwurst'))).toEqual(predicate('name', ':', 'blamwurst'));
+  });
+
+  it('unescapes "\\\\" to a literal backslash, same as quoted values', () => {
+    expect(stripPosition(parse('name:C:\\\\temp'))).toEqual(predicate('name', ':', 'C:\\temp'));
+  });
+
+  it('does not let "\\" escape a terminator — whitespace/parens still end the value', () => {
+    expect(stripPosition(parse('name:foo\\ bar'))).toEqual({
+      type: 'and',
+      children: [predicate('name', ':', 'foo\\'), predicate('_all', ':', 'bar')],
+    });
+  });
+});
+
 describe('parse: quoted values', () => {
   it('parses a quoted value containing whitespace', () => {
     expect(stripPosition(parse('first_name:"foo bar"'))).toEqual(predicate('first_name', ':', 'foo bar'));

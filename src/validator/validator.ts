@@ -17,34 +17,22 @@ const OPERATORS_BY_TYPE: Record<AttributeDefinition['type'], Operator[]> = {
   null: [':', '='],
 };
 
-// ":" (bare-colon) and "=" (explicit) are both equality — used wherever code cares about
-// "is this an equality predicate", as opposed to distinguishing the two forms themselves
-// (only the "wildcards" auto-wildcard option cares about that distinction).
 function isEqualityOperator(operator: Operator): boolean {
   return operator === ':' || operator === '=';
 }
 
-// "false" is shorthand for "'lower'" — both mean the same fold function, "false" is just
-// the pre-existing boolean spelling kept for backward compatibility.
-function foldCase(value: string, caseSensitive: boolean | 'lower' | 'upper'): string {
+// "false" and "'lower'" are the same fold function; "false" is kept for compatibility.
+function foldCase({ value, caseSensitive }: { value: string, caseSensitive: boolean | 'lower' | 'upper' }): string {
   if (caseSensitive === true) return value;
 
   return caseSensitive === 'upper' ? value.toUpperCase() : value.toLowerCase();
 }
 
-/**
- * Date-only values (and datetime values without an explicit offset) are interpreted as UTC,
- * not the host machine's local timezone.
- */
+// Dates with no explicit offset are interpreted as UTC, not local time.
 const DATE_ONLY = /^(\d{4})-(\d{2})-(\d{2})$/;
 const DATE_TIME = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?(Z|[+-]\d{2}:\d{2})?$/;
 
-export interface ValidateOptions {
-  expression: Expression;
-  attributes: AttributeMap;
-}
-
-export function validate({ expression, attributes }: ValidateOptions): ValidatedExpression {
+export function validate({ expression, attributes }: { expression: Expression, attributes: AttributeMap }): ValidatedExpression {
   switch (expression.type) {
     case 'and':
       return { type: 'and', children: expression.children.map((child) => validate({ expression: child, attributes })) };
@@ -56,16 +44,14 @@ export function validate({ expression, attributes }: ValidateOptions): Validated
       return { type: 'not', child: validate({ expression: expression.child, attributes }) };
 
     case 'predicate':
-      return validatePredicate(expression, attributes);
+      return validatePredicate({ predicate: expression, attributes });
   }
 }
 
-function validatePredicate(predicate: PredicateExpression, attributes: AttributeMap): ValidatedPredicate {
+function validatePredicate({ predicate, attributes }: { predicate: PredicateExpression, attributes: AttributeMap }): ValidatedPredicate {
   const attribute = attributes[predicate.field];
 
   if (!Object.hasOwn(attributes, predicate.field) || !attribute) {
-    // "_all" is opt-in (see DEFAULT_FIELD) — a bare term against it is never a user typo the
-    // way any other undeclared field is, so it degrades to "never matches" instead of erroring.
     if (predicate.field === DEFAULT_FIELD) {
       return { type: 'predicate', fields: [{ alwaysFalse: true }], position: predicate.position };
     }
@@ -93,86 +79,72 @@ function validatePredicate(predicate: PredicateExpression, attributes: Attribute
 
   const entries = attribute.fields?.length ? attribute.fields : [predicate.field];
 
-  // A "*" is only ever wildcard syntax for a "string"-typed field — otherwise it's just a
-  // literal character (see resolveField). A field-level type override has its own
-  // effective type, independent of the outer attribute, so this checks every entry rather
-  // than just the outer attribute's own type.
-  const hasLiteralWildcard = predicate.value.includes('*');
-  const usesWildcardSyntax = hasLiteralWildcard && entries.some((entry) => effectiveType(entry, attribute) === 'string');
-
-  if (usesWildcardSyntax && !isEqualityOperator(predicate.operator)) {
-    throw new SearchCopError(
-      'INVALID_OPERATOR',
-      `Wildcards ("*") are only supported with "=", got "${predicate.operator}" for attribute "${predicate.field}".`,
-      predicate.position,
-    );
-  }
-
   return {
     type: 'predicate',
-    fields: entries.map((entry) => resolveField(entry, predicate, attribute, hasLiteralWildcard)),
+    fields: entries.map((entry) => resolveField({ entry, predicate, attribute })),
     position: predicate.position,
   };
 }
 
-function effectiveType(entry: AttributeField, attribute: AttributeDefinition): AttributeDefinition['type'] {
-  return typeof entry === 'string' ? attribute.type : entry.type;
+function hasWildcard(value: string): boolean {
+  let found = false;
+
+  value.replace(/\\.|\*/g, (match) => {
+    if (match === '*') found = true;
+
+    return match;
+  });
+
+  return found;
 }
 
 function resolveField(
-  entry: AttributeField,
-  predicate: PredicateExpression,
-  attribute: AttributeDefinition,
-  hasLiteralWildcard: boolean,
+  { entry, predicate, attribute }:
+  { entry: AttributeField, predicate: PredicateExpression, attribute: AttributeDefinition }
 ): ValidatedField {
+
   if (typeof entry === 'string') {
-    return resolveColumn(entry, predicate, attribute, hasLiteralWildcard && attribute.type === 'string');
+    return resolveColumn({ field: entry, predicate, definition: attribute });
   }
 
-  // Field-level type override: validated independently against its own declared type,
-  // ignoring the outer attribute entirely. A wildcard only carries over if this field
-  // is itself "string" — every other type simply can't match a wildcarded value.
   const { field, ...definition } = entry;
 
-  return resolveColumn(field, predicate, definition, hasLiteralWildcard && definition.type === 'string');
+  return resolveColumn({ field, predicate, definition });
 }
 
-function resolveColumn(field: string, predicate: PredicateExpression, definition: AttributeDefinition, isWildcard: boolean): ValidatedField {
-  const resolved = resolveValue(predicate.value, predicate.operator, definition, isWildcard);
+function resolveColumn(
+  { field, predicate, definition }:
+  { field: string, predicate: PredicateExpression, definition: AttributeDefinition }
+): ValidatedField {
+  const resolved = resolveValue({ predicate, definition });
 
   return resolved === null ? { alwaysFalse: true } : { field, ...resolved };
 }
 
 function resolveValue(
-  rawValue: string,
-  operator: Operator,
-  definition: AttributeDefinition,
-  isWildcard: boolean,
+  { predicate, definition }:
+  { predicate: PredicateExpression, definition: AttributeDefinition }
 ):
   | { value: ValidatedValue; operator: ValidatedOperator; caseSensitive: boolean | 'lower' | 'upper' }
   | { operator: 'IS NULL' | 'IS NOT NULL' }
   | null {
-  // This field's own "caseSensitive" — independent of any other field in the same
-  // predicate, since a field-level type override can declare its own.
+  const { value: rawValue, operator } = predicate;
+
   const caseSensitive = definition.type === 'string' ? definition.caseSensitive ?? true : true;
 
-  // "wildcards"/"leftWildcard"/"rightWildcard" implicitly wrap a bare-colon "=" value with
-  // "*" on one or both sides, as if the caller had written it themselves — but only when
-  // they didn't already write an explicit "*" (isWildcard) or an explicit "=" (only ":"
-  // opts in to this). "wildcards: true" is shorthand for both sides at once.
-  const canAutoWildcard = definition.type === 'string' && operator === ':' && !isWildcard;
-  const autoLeftWildcard = canAutoWildcard && (definition.wildcards === true || definition.leftWildcard === true);
-  const autoRightWildcard = canAutoWildcard && (definition.wildcards === true || definition.rightWildcard === true);
+  if (definition.type === 'string' && operator === ':') {
+    const pattern = toLikePattern({
+      value: rawValue,
+      leftWildcard: definition.wildcards === true || definition.leftWildcard === true,
+      rightWildcard: definition.wildcards === true || definition.rightWildcard === true,
+      predicate,
+    });
 
-  if (isWildcard || autoLeftWildcard || autoRightWildcard) {
-    const pattern = toLikePattern(rawValue, autoLeftWildcard, autoRightWildcard);
-
-    return { value: foldCase(pattern, caseSensitive), operator: 'LIKE', caseSensitive };
+    return { value: foldCase({ value: pattern, caseSensitive }), operator: 'LIKE', caseSensitive };
   }
 
-  // Applies to every type, including a field-level override whose own type differs from
-  // the outer attribute's — the outer predicate's operator was only validated against the
-  // outer attribute's type, not this (possibly stricter) override's.
+  // A field-level override may declare a stricter type than the outer attribute, whose
+  // operator was only validated against the outer type.
   if (!OPERATORS_BY_TYPE[definition.type].includes(operator)) {
     return null;
   }
@@ -183,25 +155,38 @@ function resolveValue(
 
   const value = convertValue(rawValue, definition);
 
-  // ":" is never valid SQL — normalize it to "=" now that we're producing an actual
-  // comparison (see ValidatedOperator).
   return value === null ? null : { value, operator: operator === ':' ? '=' : operator, caseSensitive };
 }
 
-// Escapes existing occurrences of the LIKE escape character itself (see
-// LIKE_ESCAPE_CHARACTER), "%", and "_" so they match literally, then turns the DSL's "*"
-// wildcard into the LIKE wildcard "%". Order matters: escaping runs first so the "%"
-// introduced by "*" is never itself escaped. "leftWildcard"/"rightWildcard" (mirroring the
-// attribute options of the same name, and only ever with no explicit "*" already in
-// "value") additionally prefix/append a "%" — an implicit ends-with/starts-with/contains match.
-function toLikePattern(value: string, leftWildcard: boolean, rightWildcard: boolean): string {
-  const escaped = value
-    .replace(new RegExp(`[${LIKE_ESCAPE_CHARACTER}%_]`, 'g'), (char) => `${LIKE_ESCAPE_CHARACTER}${char}`)
-    .replace(/\*/g, '%');
+// "*" -> "%", "\*" -> a literal "*", everything else untouched. A bare "*" not at the
+// start/end of "value" is a malformed wildcard attempt and throws.
+function replaceWildcards({ value, predicate }: { value: string, predicate: PredicateExpression }): string {
+  return value.replace(/\\.|\*/g, (match, offset: number, fullString: string) => {
+    if (match === '*' && offset !== 0 && offset !== fullString.length - 1) {
+      throw new SearchCopError(
+        'INVALID_WILDCARD',
+        `"*" is only valid at the start and/or end of a value, got "${value}" for attribute "${predicate.field}".`,
+        predicate.position,
+      );
+    }
 
-  const prefixed = leftWildcard ? `%${escaped}` : escaped;
+    if (match === '*') return '%';
+    if (match === '\\*') return '*';
 
-  return rightWildcard ? `${prefixed}%` : prefixed;
+    return match;
+  });
+}
+
+function toLikePattern(
+  { value, leftWildcard, rightWildcard, predicate }:
+  { value: string, leftWildcard: boolean, rightWildcard: boolean, predicate: PredicateExpression }
+): string {
+  const escaped = value.replace(new RegExp(`[${LIKE_ESCAPE_CHARACTER}%_]`, 'g'), (char) => `${LIKE_ESCAPE_CHARACTER}${char}`);
+  const resolved = replaceWildcards({ value: escaped, predicate });
+
+  if (hasWildcard(escaped)) return resolved;
+
+  return `${leftWildcard ? '%' : ''}${resolved}${rightWildcard ? '%' : ''}`;
 }
 
 function resolveNull(rawValue: string, definition: NullAttributeDefinition): { operator: 'IS NULL' | 'IS NOT NULL' } | null {
@@ -214,7 +199,7 @@ function resolveNull(rawValue: string, definition: NullAttributeDefinition): { o
 function convertValue(value: string, definition: Exclude<AttributeDefinition, NullAttributeDefinition>): ValidatedValue | null {
   switch (definition.type) {
     case 'string':
-      return foldCase(value, definition.caseSensitive ?? true);
+      return foldCase({ value, caseSensitive: definition.caseSensitive ?? true });
 
     case 'number':
       return convertNumber(value);

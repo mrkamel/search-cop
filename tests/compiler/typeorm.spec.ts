@@ -4,6 +4,8 @@ import { parse } from '../../src/parser/parser.js';
 import { validate } from '../../src/validator/validator.js';
 import { compile, compileCondition } from '../../src/compiler/typeorm.js';
 import { AppDataSource } from '../support/AppDataSource.js';
+import { SearchCopError } from '../../src/errors/errors.js';
+import { tryCatch } from '../../src/utils/tryCatch.js';
 import type { AttributeMap } from '../../src/attributes/types.js';
 import { ProductRepository } from '../support/ProductRepository.js';
 
@@ -139,6 +141,29 @@ describe('compile: wildcards', () => {
   });
 });
 
+describe('compile: escaped wildcards ("\\*")', () => {
+  it('compiles an escaped-only "\\*" to a literal "*", not a wildcard', () => {
+    const [sql, params] = compileQuery({ query: 'name:Name\\*' }).getQueryAndParameters();
+
+    expect(sql).toContain(`name LIKE ? ESCAPE '!'`);
+    expect(params).toEqual(['Name*']);
+  });
+
+  it('compiles a real wildcard combined with an escaped "\\*" to a LIKE pattern with a literal "*" in it', () => {
+    const [sql, params] = compileQuery({ query: 'name:*Name\\*Other' }).getQueryAndParameters();
+
+    expect(sql).toContain(`name LIKE ? ESCAPE '!'`);
+    expect(params).toEqual(['%Name*Other']);
+  });
+
+  it('throws when compiling a real "*" that is not at the start/end of the value', () => {
+    const [error] = tryCatch(() => compileQuery({ query: 'name:Name*Other' }));
+
+    expect(error).toBeInstanceOf(SearchCopError);
+    expect((error as SearchCopError).code).toBe('INVALID_WILDCARD');
+  });
+});
+
 describe('compile: "wildcards" option (implicit contains matching)', () => {
   it('compiles a bare-colon value to a "%...%" LIKE pattern', () => {
     const [sql, params] = compileQuery({ query: 'name:Name', attributeMap: wildcardOptionAttributes }).getQueryAndParameters();
@@ -173,14 +198,14 @@ describe('compile: case sensitivity', () => {
   it('leaves the column bare for a case-sensitive attribute', () => {
     const [sql] = compileQuery({ query: 'name:Fred' }).getQueryAndParameters();
 
-    expect(sql).toContain('name = ?');
+    expect(sql).toContain(`name LIKE ? ESCAPE '!'`);
     expect(sql).not.toContain('LOWER');
   });
 
   it('wraps the column in LOWER() for a case-insensitive attribute, and lowercases the bound value', () => {
     const [sql, params] = compileQuery({ query: 'name:Fred', attributeMap: caseInsensitiveAttributes }).getQueryAndParameters();
 
-    expect(sql).toContain('LOWER(name) = ?');
+    expect(sql).toContain(`LOWER(name) LIKE ? ESCAPE '!'`);
     expect(params).toEqual(['fred']);
   });
 
@@ -195,7 +220,7 @@ describe('compile: case sensitivity', () => {
     const upperCaseAttributes: AttributeMap = { name: { type: 'string', caseSensitive: 'upper' } };
     const [sql, params] = compileQuery({ query: 'name:Fred', attributeMap: upperCaseAttributes }).getQueryAndParameters();
 
-    expect(sql).toContain('UPPER(name) = ?');
+    expect(sql).toContain(`UPPER(name) LIKE ? ESCAPE '!'`);
     expect(params).toEqual(['FRED']);
   });
 
@@ -205,16 +230,16 @@ describe('compile: case sensitivity', () => {
     };
     const [sql, params] = compileQuery({ query: 'search:Fred', attributeMap: mixedCaseAttributes }).getQueryAndParameters();
 
-    expect(sql).toContain('(name = ? OR LOWER(description) = ?)');
+    expect(sql).toContain(`(name LIKE ? ESCAPE '!' OR LOWER(description) LIKE ? ESCAPE '!')`);
     expect(params).toEqual(['Fred', 'fred']);
   });
 });
 
 describe('compile: multi-field attributes', () => {
-  it('ORs together each field for "="', () => {
+  it('ORs together each field for a bare-colon value', () => {
     const [sql, params] = compileQuery({ query: 'search:Fred', attributeMap: multiFieldAttributes }).getQueryAndParameters();
 
-    expect(sql).toContain('(name = ? OR description = ?)');
+    expect(sql).toContain(`(name LIKE ? ESCAPE '!' OR description LIKE ? ESCAPE '!')`);
     expect(params).toEqual(['Fred', 'Fred']);
   });
 
@@ -242,7 +267,7 @@ describe('compile: multi-field attributes', () => {
   it('inserts a "raw" field verbatim, unescaped and unqualified, leaving other fields bare', () => {
     const [sql, params] = compileQuery({ query: 'search:Fred', attributeMap: rawFieldAttributes }).getQueryAndParameters();
 
-    expect(sql).toContain('(name = ? OR CAST(price AS TEXT) = ?)');
+    expect(sql).toContain(`(name LIKE ? ESCAPE '!' OR CAST(price AS TEXT) LIKE ? ESCAPE '!')`);
     expect(params).toEqual(['Fred', 'Fred']);
   });
 
@@ -258,7 +283,7 @@ describe('compile: field-level type overrides', () => {
   it('converts the overridden field using its own type', () => {
     const [sql, params] = compileQuery({ query: 'search:100', attributeMap: typedFieldAttributes }).getQueryAndParameters();
 
-    expect(sql).toContain('name = ?');
+    expect(sql).toContain(`name LIKE ? ESCAPE '!'`);
     // The sqlite driver inlines numeric parameters as literals rather than binding them.
     expect(sql).toContain('price = 100');
     expect(params).toEqual(['100']);
@@ -267,7 +292,7 @@ describe('compile: field-level type overrides', () => {
   it('compiles a non-matching overridden field to an unconditional "1 = 0", not an error', () => {
     const [sql, params] = compileQuery({ query: 'search:Fred', attributeMap: typedFieldAttributes }).getQueryAndParameters();
 
-    expect(sql).toContain('(name = ? OR 1 = 0)');
+    expect(sql).toContain(`(name LIKE ? ESCAPE '!' OR 1 = 0)`);
     expect(params).toEqual(['Fred']);
   });
 });
@@ -318,14 +343,14 @@ describe('compile: default field ("_all")', () => {
   it('compiles a bare query against "_all", OR-ing its configured fields', () => {
     const [sql, params] = compileQuery({ query: 'Fred', attributeMap: defaultFieldAttributes }).getQueryAndParameters();
 
-    expect(sql).toContain('(name = ? OR description = ?)');
+    expect(sql).toContain(`(name LIKE ? ESCAPE '!' OR description LIKE ? ESCAPE '!')`);
     expect(params).toEqual(['Fred', 'Fred']);
   });
 
   it('ANDs multiple bare terms together (free-text search)', () => {
     const [sql, params] = compileQuery({ query: 'red shoes', attributeMap: defaultFieldAttributes }).getQueryAndParameters();
 
-    expect(sql).toMatch(/\(name = \? OR description = \?\) AND \(name = \? OR description = \?\)/);
+    expect(sql).toMatch(/\(name LIKE \? ESCAPE '!' OR description LIKE \? ESCAPE '!'\) AND \(name LIKE \? ESCAPE '!' OR description LIKE \? ESCAPE '!'\)/);
     expect(params).toEqual(['red', 'red', 'shoes', 'shoes']);
   });
 });
@@ -383,7 +408,7 @@ describe('compile: negation (NOT)', () => {
   it('negates a multi-field OR group as a whole, not each field independently', () => {
     const [sql, params] = compileQuery({ query: 'NOT search:Fred', attributeMap: multiFieldAttributes }).getQueryAndParameters();
 
-    expect(sql).toContain('NOT(COALESCE(((name = ? OR description = ?)), FALSE))');
+    expect(sql).toContain(`NOT(COALESCE(((name LIKE ? ESCAPE '!' OR description LIKE ? ESCAPE '!')), FALSE))`);
     expect(params).toEqual(['Fred', 'Fred']);
   });
 

@@ -16,43 +16,41 @@ AndExpression
       return tail.length === 0 ? head : { type: 'and', children: [head, ...tail] }
     }
 
-// AND is the default combinator between predicates, so it may be stated explicitly
-// ("A AND B") or left implicit via juxtaposition ("A B") — either way requires whitespace.
 Connector
   = _ "AND" _
   / [\t\n\r ]+
 
 PrimaryExpression
   = "(" _ e:Expression _ ")" { return e }
-  // "NOT" must be immediately followed by whitespace or "(" — otherwise it's just the
-  // start of a field name (e.g. "NOTstatus:online" stays one field, not NOT + "status").
-  // Binds tighter than AND/OR, so it only negates the next term/group; parenthesize to
-  // negate more ("NOT (a b)" negates the whole group; "NOT a b" is "(NOT a) AND b").
+  // Must be followed by whitespace/"(" — else it's a field name, e.g. "NOTstatus:online".
   / "NOT" &[\t\n\r (] _ e:PrimaryExpression { return { type: 'not', child: e } }
-  // "-" is shorthand for "NOT", but only when directly attached to what follows (no
-  // whitespace) — "-status:online" and "-(...)" negate, but "- foo" (a space after "-")
-  // or a lone trailing "-" is just the literal value "-" (or "-" is part of that value,
-  // e.g. a negative number like "price:-5" — this rule never fires inside a value,
-  // only at the start of a term). Searching for a literal leading "-" needs quoting
-  // (`"-test"`), same as "AND"/"OR"/"NOT" do.
+  // Shorthand for "NOT", only when attached with no space (else it's a literal "-" value).
   / "-" &[^\t\n\r ] e:PrimaryExpression { return { type: 'not', child: e } }
   / Predicate
 
 Predicate
-  = field:Field ":" operator:Operator? value:Value
+  // Only the bare-colon form can carry wildcard syntax — LiteralValue never unescapes
+  // "\*" to a wildcard, since "*" isn't special with an explicit operator anyway.
+  = field:Field ":" operator:Operator value:LiteralValue
     {
       return {
         type: 'predicate',
         field,
-        // No operator character written at all ("field:value") is the bare-colon
-        // shorthand — kept distinct from an explicit "=" (see ast/types.ts).
-        operator: operator ?? ':',
+        operator,
         value,
         position: location().start.offset + 1,
       }
     }
-  // A bare value with no "field:" prefix searches the conventional "_all" attribute —
-  // define it in `attributes` (typically as a multi-field attribute) to opt in.
+  / field:Field ":" value:Value
+    {
+      return {
+        type: 'predicate',
+        field,
+        operator: ':',
+        value,
+        position: location().start.offset + 1,
+      }
+    }
   / value:QuotedValue
     {
       return {
@@ -63,9 +61,6 @@ Predicate
         position: location().start.offset + 1,
       }
     }
-  // Bare (unquoted) "AND"/"OR"/"NOT" are always reserved as keywords, even where they'd
-  // otherwise be unambiguous (e.g. as the very first term) — quote them (`"AND"`) to
-  // search for the literal word via the default field.
   / !ReservedWord value:UnquotedValue
     {
       return {
@@ -95,14 +90,36 @@ Value "value"
   / UnquotedValue
 
 UnquotedValue
-  = chars:$([^\t\n\r ()]+) { return chars }
+  = chars:UnquotedChar+ { return chars.join('') }
 
-// Double-quoted values may contain whitespace and parentheses. "\" escapes the
-// following character (e.g. \" for a literal quote, \\ for a literal backslash).
+UnquotedChar
+  = "\\*" { return '\\*' }
+  / "\\" char:[^\t\n\r ()] { return char }
+  / char:[^\t\n\r ()] { return char }
+
 QuotedValue "quoted value"
   = '"' chars:QuotedChar* '"' { return chars.join('') }
 
 QuotedChar
+  = "\\*" { return '\\*' }
+  / "\\" char:. { return char }
+  / !'"' char:. { return char }
+
+LiteralValue "value"
+  = QuotedLiteralValue
+  / UnquotedLiteralValue
+
+UnquotedLiteralValue
+  = chars:UnquotedLiteralChar+ { return chars.join('') }
+
+UnquotedLiteralChar
+  = "\\" char:[^\t\n\r ()] { return char }
+  / char:[^\t\n\r ()] { return char }
+
+QuotedLiteralValue "quoted value"
+  = '"' chars:QuotedLiteralChar* '"' { return chars.join('') }
+
+QuotedLiteralChar
   = "\\" char:. { return char }
   / !'"' char:. { return char }
 

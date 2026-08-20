@@ -200,15 +200,12 @@ describe('validate: wildcards', () => {
   });
 
   it('does not escape a literal "\\" — it has no special meaning to LIKE', () => {
-    expect(validateQuery('name:foo\\bar*')).toMatchObject({ fields: [{ value: 'foo\\bar%' }] });
+    expect(validateQuery('name:foo\\\\bar*')).toMatchObject({ fields: [{ value: 'foo\\bar%' }] });
   });
 
-  it('rejects wildcard values combined with ordering operators', () => {
+  it('treats "*" as a plain literal character with ordering operators — no wildcard interpretation', () => {
     for (const operator of ['>', '>=', '<', '<=']) {
-      const [error] = tryCatch(() => validateQuery(`name:${operator}Pet*`));
-
-      expect(error).toBeInstanceOf(SearchCopError);
-      expect((error as SearchCopError).code).toBe('INVALID_OPERATOR');
+      expect(validateQuery(`name:${operator}Pet*`)).toMatchObject({ fields: [{ operator, value: 'Pet*' }] });
     }
   });
 
@@ -226,6 +223,59 @@ describe('validate: wildcards', () => {
     expect(validate({ expression: parse('price:abc*'), attributes: attributesWithStringOverride })).toMatchObject({
       fields: [{ field: 'sku', operator: 'LIKE', value: 'abc%' }],
     });
+  });
+});
+
+describe('validate: escaped wildcards ("\\*")', () => {
+  it('unescapes "\\*" to a literal "*" when no real wildcard is present', () => {
+    expect(validateQuery('name:Name\\*')).toMatchObject({ fields: [{ operator: 'LIKE', value: 'Name*' }] });
+    expect(validateQuery('name:\\*Name')).toMatchObject({ fields: [{ operator: 'LIKE', value: '*Name' }] });
+    expect(validateQuery('name:Name\\*Other')).toMatchObject({ fields: [{ operator: 'LIKE', value: 'Name*Other' }] });
+  });
+
+  it('allows an escaped "\\*" together with ordering operators, since it carries no wildcard meaning', () => {
+    expect(validateQuery('name:>Name\\*')).toMatchObject({ fields: [{ operator: '>', value: 'Name*' }] });
+    expect(validateQuery('name:<=Name\\*')).toMatchObject({ fields: [{ operator: '<=', value: 'Name*' }] });
+  });
+
+  it('combines a real prefix/suffix wildcard with an escaped literal "*" elsewhere in the value', () => {
+    expect(validateQuery('name:*Name\\*Other')).toMatchObject({ fields: [{ operator: 'LIKE', value: '%Name*Other' }] });
+    expect(validateQuery('name:Name\\*Other*')).toMatchObject({ fields: [{ operator: 'LIKE', value: 'Name*Other%' }] });
+  });
+
+  it('rejects a real (un-escaped) "*" anywhere other than the start/end of the value', () => {
+    const [error] = tryCatch(() => validateQuery('name:Name*Other'));
+
+    expect(error).toBeInstanceOf(SearchCopError);
+    expect((error as SearchCopError).code).toBe('INVALID_WILDCARD');
+  });
+
+  it('rejects a real "*" in the middle even when the value also has valid edge wildcards', () => {
+    const [error] = tryCatch(() => validateQuery('name:*Name*Other*'));
+
+    expect(error).toBeInstanceOf(SearchCopError);
+    expect((error as SearchCopError).code).toBe('INVALID_WILDCARD');
+  });
+
+  it('drops a single "\\" before an unrelated character, e.g. an unescaped Windows-style path', () => {
+    expect(validateQuery('name:C:\\Name\\Other')).toMatchObject({ fields: [{ operator: 'LIKE', value: 'C:NameOther' }] });
+  });
+
+  it('requires doubling "\\" to keep a literal backslash, e.g. a Windows-style path', () => {
+    expect(validateQuery('name:C:\\\\Name\\\\Other')).toMatchObject({ fields: [{ operator: 'LIKE', value: 'C:\\Name\\Other' }] });
+    expect(validateQuery('name:C:\\\\Name\\\\Other*')).toMatchObject({ fields: [{ operator: 'LIKE', value: 'C:\\Name\\Other%' }] });
+  });
+
+  it('respects "caseSensitive: false" on an escaped-only value', () => {
+    expect(validateQuery('nameCaseInsensitive:Name\\*')).toMatchObject({ fields: [{ operator: 'LIKE', value: 'name*' }] });
+  });
+
+  it('does not unescape "\\*" for a non-string attribute type — it stays a literal, never-matching value', () => {
+    expect(validateQuery('status:onl\\*ine')).toMatchObject({ fields: [{ alwaysFalse: true }] });
+  });
+
+  it('behaves identically for a quoted value', () => {
+    expect(validateQuery('name:"Name\\*Other"')).toMatchObject({ fields: [{ operator: 'LIKE', value: 'Name*Other' }] });
   });
 });
 
@@ -254,7 +304,7 @@ describe('validate: "wildcards" option (implicit contains matching)', () => {
   });
 
   it('does not apply to attributes without the option — an exact match, like today', () => {
-    expect(validateQuery('name:Name')).toMatchObject({ fields: [{ operator: '=', value: 'Name' }] });
+    expect(validateQuery('name:Name')).toMatchObject({ fields: [{ operator: 'LIKE', value: 'Name' }] });
   });
 
   it('escapes literal "%", "_", and "!" in the auto-wrapped value', () => {
@@ -379,8 +429,8 @@ describe('validate: multi-field attributes', () => {
   it('resolves an attribute\'s "fields" list instead of its own key', () => {
     expect(validateQuery('search:Fred')).toMatchObject({
       fields: [
-        { field: 'name', operator: '=', value: 'Fred' },
-        { field: 'description', operator: '=', value: 'Fred' },
+        { field: 'name', operator: 'LIKE', value: 'Fred' },
+        { field: 'description', operator: 'LIKE', value: 'Fred' },
       ],
     });
   });
@@ -519,8 +569,8 @@ describe('validate: default field ("_all")', () => {
 
     expect(result).toMatchObject({
       fields: [
-        { field: 'name', operator: '=', value: 'Fred' },
-        { field: 'description', operator: '=', value: 'Fred' },
+        { field: 'name', operator: 'LIKE', value: 'Fred' },
+        { field: 'description', operator: 'LIKE', value: 'Fred' },
       ],
     });
   });
@@ -546,9 +596,9 @@ describe('validate: default field ("_all")', () => {
 
     expect(result).toMatchObject({
       fields: [
-        { field: 'name', operator: '=', value: 'Fred' },
-        { field: 'description', operator: '=', value: 'Fred' },
-        { field: 'CAST(id AS TEXT)', operator: '=', value: 'Fred' },
+        { field: 'name', operator: 'LIKE', value: 'Fred' },
+        { field: 'description', operator: 'LIKE', value: 'Fred' },
+        { field: 'CAST(id AS TEXT)', operator: 'LIKE', value: 'Fred' },
       ],
     });
   });
