@@ -505,11 +505,8 @@ describe('validate: unparseable values never error, for any attribute — not ju
 });
 
 describe('validate: default field ("_all")', () => {
-  it('rejects a bare query when "_all" is not declared in attributes', () => {
-    const [error] = tryCatch(() => validateQuery('Fred'));
-
-    expect(error).toBeInstanceOf(SearchCopError);
-    expect((error as SearchCopError).code).toBe('UNKNOWN_ATTRIBUTE');
+  it('does not error on a bare query when "_all" is not declared — it just never matches', () => {
+    expect(validateQuery('Fred')).toMatchObject({ fields: [{ alwaysFalse: true }] });
   });
 
   it('validates a bare query like any other attribute once "_all" is declared', () => {

@@ -362,10 +362,11 @@ red* shoes*           // same, but with wildcards on each term
 red status:online     // (name = 'red' OR description = 'red') AND status = 'online'
 ```
 
-If `_all` isn't declared in `attributes`, a bare query throws `UNKNOWN_ATTRIBUTE` like any
-other undeclared field. `AND`/`OR`/`NOT` are always reserved as keywords, even as a bare
-term on their own — double-quote them (`"AND"`, `"OR"`, `"NOT"`) to search for the literal
-word.
+Unlike any other undeclared field, a bare query never errors when `_all` isn't declared in
+`attributes` — it's opt-in, so it just never matches (see
+[Unparseable values never error](#unparseable-values-never-error)) rather than being
+treated as a typo. `AND`/`OR`/`NOT` are always reserved as keywords, even as a bare term on
+their own — double-quote them (`"AND"`, `"OR"`, `"NOT"`) to search for the literal word.
 
 ### UUIDs
 
@@ -435,7 +436,8 @@ rows — rather than a client error. If you want to reject malformed input befor
 Invalid queries throw a `SearchCopError` with a `code`:
 
 - `INVALID_SYNTAX` — the query does not parse (includes an approximate character `position`)
-- `UNKNOWN_ATTRIBUTE` — the field is not declared in `attributes`
+- `UNKNOWN_ATTRIBUTE` — the field is not declared in `attributes` (except a bare query
+  against an undeclared `_all` — see [Default field](#default-field))
 - `INVALID_OPERATOR` — the operator is not supported for the attribute's type (e.g. `status:>online` for an `enum`)
 
 Note there's no error for a value that doesn't fit its type (an invalid uuid, an unknown

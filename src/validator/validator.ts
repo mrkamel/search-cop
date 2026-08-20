@@ -3,6 +3,7 @@ import type { Expression, Operator, PredicateExpression } from '../ast/types.js'
 import type { AttributeDefinition, AttributeField, AttributeMap, NullAttributeDefinition } from '../attributes/types.js';
 import type { ValidatedExpression, ValidatedField, ValidatedOperator, ValidatedPredicate, ValidatedValue } from './types.js';
 import { SearchCopError } from '../errors/errors.js';
+import { DEFAULT_FIELD } from '../parser/parser.js';
 
 const OPERATORS_BY_TYPE: Record<AttributeDefinition['type'], Operator[]> = {
   string: [':', '=', '>', '>=', '<', '<='],
@@ -62,6 +63,12 @@ function validatePredicate(predicate: PredicateExpression, attributes: Attribute
   const attribute = attributes[predicate.field];
 
   if (!Object.hasOwn(attributes, predicate.field) || !attribute) {
+    // "_all" is opt-in (see DEFAULT_FIELD) — a bare term against it is never a user typo the
+    // way any other undeclared field is, so it degrades to "never matches" instead of erroring.
+    if (predicate.field === DEFAULT_FIELD) {
+      return { type: 'predicate', fields: [{ alwaysFalse: true }], position: predicate.position };
+    }
+
     throw new SearchCopError('UNKNOWN_ATTRIBUTE', `Unknown search attribute "${predicate.field}".`, predicate.position);
   }
 

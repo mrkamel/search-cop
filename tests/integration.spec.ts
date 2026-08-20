@@ -259,8 +259,12 @@ describe('search: multi-field attributes', () => {
 });
 
 describe('search: default field ("_all")', () => {
-  it('rejects a bare query when "_all" is not configured', () => {
-    expect(() => search({ repository: ProductRepository, query: 'Fred', attributes })).toThrow(SearchCopError);
+  it('returns no results for a bare query when "_all" is not configured, instead of erroring', async () => {
+    await createProduct({});
+
+    const products = await search({ repository: ProductRepository, query: 'Fred', attributes }).getMany();
+
+    expect(products).toEqual([]);
   });
 
   it('matches a bare query against any configured "_all" field', async () => {

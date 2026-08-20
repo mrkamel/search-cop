@@ -25,6 +25,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   an existing functional index. `false` and `'lower'` are equivalent. See
   [Case sensitivity](README.md#case-sensitivity).
 
+### Changed
+
+- A bare query (or explicit `_all:...`) no longer throws `UNKNOWN_ATTRIBUTE` when `_all`
+  isn't declared in `attributes` — since it's opt-in, not a typo, it now just never matches,
+  like any other unparseable value. See [Default field](README.md#default-field).
+
 ## [0.1.0]
 
 Initial release.
