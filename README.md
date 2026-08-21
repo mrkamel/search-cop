@@ -382,6 +382,56 @@ text) it can't support wildcards against that field — a wildcarded query alway
 validation for anything other than `string` (there's always a literal `*` in the raw
 value, and no uuid/number/date/etc. can ever contain one).
 
+### Trigram indexes (Postgres)
+
+A bare-`:` `string` match compiles to `LIKE '%...%'` when [wildcards](#implicit-wildcards)
+are used on both sides — a pattern a plain B-tree index can't accelerate at all, since the
+leading `%` rules out any prefix-based lookup. Postgres' [`pg_trgm`][pg_trgm] extension
+provides a `GIN`/`GiST` index type built for exactly this case:
+
+```sql
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+CREATE INDEX idx_name_trgm ON products USING gin (name gin_trgm_ops);
+```
+
+```ts
+attributes: {
+  name: { type: 'string', wildcards: true },
+}
+```
+
+```text
+name:pet     // name LIKE '%pet%' — now served by idx_name_trgm instead of a seq scan
+```
+
+This is entirely a database-side concern — search-cop doesn't create or know about indexes,
+it just needs the compiled SQL expression to match whatever expression the index was built
+on, exactly. Two ways that expression can drift out from under an index without erroring
+(the query still runs, just without using the index):
+
+- **A [multi-field](#multi-field-attributes) attribute** compiles to separate `OR`-ed `LIKE`
+  conditions per field (`name LIKE ... OR description LIKE ...`), which doesn't match an
+  index built on a *concatenated* expression. To use an index on `(name || ' ' ||
+  description)`, give that same concatenation as a single raw [`fields`](#fields-are-raw-sql)
+  entry instead of two separate ones, so the compiled condition is one `LIKE` against that
+  exact expression:
+
+  ```ts
+  attributes: {
+    search: { type: 'string', wildcards: true, fields: ["name || ' ' || description"] },
+  }
+  ```
+
+  ```sql
+  CREATE INDEX idx_search_trgm ON products USING gin ((name || ' ' || description) gin_trgm_ops);
+  ```
+
+- **`caseSensitive: false`/`'upper'`** (see [Case sensitivity](#case-sensitivity)) wraps the
+  column in `LOWER()`/`UPPER()`, changing the compiled expression — build the index on the
+  same wrapped expression (e.g. `USING gin ((LOWER(name)) gin_trgm_ops)`) to keep it matching.
+
+[pg_trgm]: https://www.postgresql.org/docs/current/pgtrgm.html
+
 ### Default field
 
 A query term with no `field:` prefix compiles to a predicate against the conventional
