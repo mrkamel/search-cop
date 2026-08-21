@@ -5,6 +5,22 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0]
+
+### Added
+
+- `postgres_fulltext` attribute type — compiles to `@@ websearch_to_tsquery(...)` against a
+  `tsvector` (a precomputed/indexed column, or a `to_tsvector(...)` call) supplied via
+  `fields`, same raw-SQL contract as any other attribute. An optional `language` (default
+  `'simple'`) sets the `regconfig` passed to `websearch_to_tsquery`. Only the bare `:`
+  operator is supported. See [Full-text search (Postgres)](README.md#full-text-search-postgres).
+- Several bare terms against the same `postgres_fulltext` attribute, combined at the same
+  `AND`/`OR` level (including a single negated term), are fused into one `@@` call instead of
+  one call per term, avoiding re-evaluating the `tsvector` expression once per word. Fusion
+  only merges direct siblings; a `NOT` wrapping a whole group, or terms split across nested
+  groups with other attributes mixed in, still compile correctly, just without fusing. See
+  [Full-text search (Postgres)](README.md#full-text-search-postgres).
+
 ## [0.2.0]
 
 ### Added

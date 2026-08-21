@@ -7,10 +7,13 @@ export const LIKE_ESCAPE_CHARACTER = '!';
 
 export type ValidatedOperator = Exclude<Operator, ':'> | 'LIKE';
 
+export type FulltextEngine = 'postgres_fulltext';
+
 export type ValidatedField =
   | { alwaysFalse: true }
   | { field: string, value: ValidatedValue, operator: ValidatedOperator, caseSensitive: boolean | 'lower' | 'upper' }
-  | { field: string, operator: 'IS NULL' | 'IS NOT NULL' };
+  | { field: string, operator: 'IS NULL' | 'IS NOT NULL' }
+  | { field: string, fulltext: FulltextEngine, term: string, language: string };
 
 export interface ValidatedPredicate {
   type: 'predicate';

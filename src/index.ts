@@ -46,8 +46,17 @@ export type {
   EnumAttributeDefinition,
   NullAttributeDefinition,
   NumberAttributeDefinition,
+  PostgresFulltextAttributeDefinition,
   StringAttributeDefinition,
   UuidAttributeDefinition,
 } from './attributes/types.js';
 export type { AndExpression, Expression, NotExpression, Operator, OrExpression, PredicateExpression } from './ast/types.js';
-export type { ValidatedExpression, ValidatedField, ValidatedNot, ValidatedOperator, ValidatedPredicate, ValidatedValue } from './validator/types.js';
+export type {
+  FulltextEngine,
+  ValidatedExpression,
+  ValidatedField,
+  ValidatedNot,
+  ValidatedOperator,
+  ValidatedPredicate,
+  ValidatedValue,
+} from './validator/types.js';

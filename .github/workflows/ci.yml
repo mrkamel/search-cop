@@ -11,6 +11,20 @@ jobs:
     strategy:
       matrix:
         node-version: [22, 24]
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: search_cop
+          POSTGRES_PASSWORD: search_cop
+          POSTGRES_DB: search_cop
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U search_cop"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 15
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -22,3 +36,4 @@ jobs:
       - run: pnpm run typecheck
       - run: pnpm run lint
       - run: pnpm test
+      - run: DATABASE=postgres pnpm test

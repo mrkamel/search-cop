@@ -75,6 +75,7 @@ Only attributes declared in `attributes` may be queried. Supported types:
 | `enum`     | `string`       | `=`                               |
 | `uuid`     | `string`       | `=`                               |
 | `null`     | none — compiles to `IS NULL`/`IS NOT NULL` | `=`  |
+| `postgres_fulltext` | `string` | `:` only                |
 
 `enum` attributes also require a `values: string[]` list, or a `values: Record<string, string>`
 map to translate the query-facing value into a different underlying value, e.g.
@@ -468,6 +469,46 @@ createdAt:>=2026-01-01T10:00:00             // 2026-01-01T10:00:00.000Z (UTC)
 createdAt:>=2026-01-01T10:00:00+02:00       // 2026-01-01T08:00:00.000Z
 ```
 
+### Full-text search (Postgres)
+
+A `postgres_fulltext` attribute compiles to `@@ websearch_to_tsquery(...)`. `fields` must
+already evaluate to a `tsvector` — either a precomputed/indexed column, or a `to_tsvector(...)`
+call — search-cop never wraps or casts it for you, same as any other [raw `fields`
+entry](#fields-are-raw-sql):
+
+```ts
+attributes: {
+  _all: {
+    type: 'postgres_fulltext',
+    fields: ["to_tsvector('simple', title || ' ' || body)"],
+  },
+}
+```
+
+```text
+pizza                 // to_tsvector(...) @@ websearch_to_tsquery('simple', 'pizza')
+pizza pasta           // ...@@ websearch_to_tsquery('simple', 'pizza pasta')       (AND)
+pizza OR pasta        // ...@@ websearch_to_tsquery('simple', 'pizza OR pasta')    (OR)
+pizza -pasta          // ...@@ websearch_to_tsquery('simple', 'pizza -pasta')      (NOT)
+```
+
+Several bare terms against the same `postgres_fulltext` attribute, combined at the same
+`AND`/`OR` level (including a single negated term), are fused into **one** `@@` call instead
+of one call per term — `websearch_to_tsquery`'s own syntax already understands `AND`
+(space-separated)/`OR`/`-`, which happens to line up with search-cop's own combinators. This
+keeps a free-text query from re-evaluating the `tsvector` expression (and re-scanning its
+index) once per word. Fusion only merges direct siblings under one `AND`/`OR`/single-term
+`NOT`; a `NOT` wrapping a whole group, or terms split across nested groups with other
+attributes mixed in, compile to separate `@@` calls instead (still correct, just not fused).
+
+An optional `language` (default `'simple'` — no stemming, no stopwords) sets the `regconfig`
+passed to `websearch_to_tsquery` — it should match whatever produced the `tsvector` in
+`fields`. Set it to `'english'` (or another language config) for stemming/stopword handling.
+
+Only `:` is supported (no `=`, no ordering operators, no wildcard syntax — `websearch_to_tsquery`
+has its own query mini-language instead). MySQL (`MATCH ... AGAINST`) and SQLite (FTS5) full-text
+are not implemented yet — see [Out of scope](#out-of-scope-for-now).
+
 ### Unparseable values never error
 
 A value that doesn't fit its attribute's type — `id:foo` where `id` is a `uuid`,
@@ -498,10 +539,11 @@ enum value, ...) — see [Unparseable values never error](#unparseable-values-ne
 
 ## Out of scope (for now)
 
-Associations/joins, full-text search (ranking/relevance/stemming — bare terms against
-`_all` are exact/wildcard `LIKE` matches, not a relevance-ranked search), a `!=` operator
+Associations/joins, full-text search on MySQL (`MATCH ... AGAINST`) or SQLite (FTS5) — only
+[Postgres full-text](#full-text-search-postgres) is implemented so far — a `!=` operator
 (negate with [`NOT`](#query-syntax) instead), range syntax (`1..100`), query
-optimization/planning, pagination/sorting, raw SQL as the top-level query language (a
+optimization/planning beyond the [full-text fusion](#full-text-search-postgres) already
+described, pagination/sorting, raw SQL as the top-level query language (a
 [`fields` entry](#fields-are-raw-sql) is raw SQL, but the `query` string itself is always
 the DSL, never passed through), and additional database adapters are intentionally not
 implemented. The AST is designed so these can be added later.
@@ -510,8 +552,16 @@ implemented. The AST is designed so these can be added later.
 
 ```bash
 pnpm install
-pnpm test        # build the grammar and run the test suite
+pnpm test        # build the grammar and run the test suite (sqlite)
 pnpm run lint
 pnpm run typecheck
 pnpm run build
+```
+
+Postgres-specific tests (full-text search, and the general integration suite run against
+Postgres instead of sqlite) need a real database:
+
+```bash
+docker compose up -d
+DATABASE=postgres pnpm test
 ```

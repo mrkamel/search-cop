@@ -22,9 +22,9 @@ export class ProductEntity {
   @Column({ type: 'boolean', default: true })
   active!: boolean;
 
-  @Column({ type: 'datetime' })
+  @Column({ name: 'created_at', type: process.env.DATABASE === 'postgres' ? 'timestamp' : 'datetime' })
   createdAt!: Date;
 
-  @Column({ type: 'varchar', nullable: true })
+  @Column({ name: 'assigned_to', type: 'varchar', nullable: true })
   assignedTo!: string | null;
 }

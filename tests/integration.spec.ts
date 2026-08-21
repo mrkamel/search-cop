@@ -41,7 +41,7 @@ const uuidAttributes: AttributeMap = {
 };
 
 const nullAttributes: AttributeMap = {
-  assigned: { type: 'null', isNull: ['no'], isNotNull: ['yes'], fields: ['assignedTo'] },
+  assigned: { type: 'null', isNull: ['no'], isNotNull: ['yes'], fields: ['assigned_to'] },
 };
 
 const ProductRepository = AppDataSource.getRepository(ProductEntity);
@@ -254,7 +254,7 @@ describe('search: case sensitivity', () => {
   // regardless of collation — so "caseSensitive: true" (the default) can't actually be
   // enforced here on SQLite. Fixing this needs a SQLite-specific construct in the compiler
   // (e.g. GLOB, or PRAGMA case_sensitive_like); tracked separately from this behavior.
-  it('is case-sensitive by default in principle, but SQLite\'s LIKE ignores case regardless', async () => {
+  it.skipIf(process.env.DATABASE === 'postgres')('is case-sensitive by default in principle, but SQLite\'s LIKE ignores case regardless', async () => {
     const match = await createProduct({ name: 'FRED' });
 
     const products = await search({ repository: ProductRepository, query: 'name:fred', attributes }).getMany();
@@ -468,7 +468,7 @@ describe('search: negation (NOT)', () => {
     // Regression test: SQL's three-valued logic means "NOT(name = 'Name' OR assignedTo =
     // 'Name')" naively evaluates to NULL (not true) for a row where assignedTo IS NULL and
     // name doesn't match, silently dropping it from the results instead of including it.
-    const nullableMultiFieldAttributes: AttributeMap = { search: { type: 'string', fields: ['name', 'assignedTo'] } };
+    const nullableMultiFieldAttributes: AttributeMap = { search: { type: 'string', fields: ['name', 'assigned_to'] } };
 
     const match = await createProduct({ name: 'other', assignedTo: null });
 
@@ -485,7 +485,7 @@ describe('search: negation (NOT)', () => {
   });
 
   it('stays NULL-safe through double negation too', async () => {
-    const nullableMultiFieldAttributes: AttributeMap = { search: { type: 'string', fields: ['name', 'assignedTo'] } };
+    const nullableMultiFieldAttributes: AttributeMap = { search: { type: 'string', fields: ['name', 'assigned_to'] } };
 
     const match = await createProduct({ name: 'Name', assignedTo: null });
 

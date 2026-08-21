@@ -1,6 +1,7 @@
 import { Brackets, type ObjectLiteral, type Repository, type SelectQueryBuilder, type WhereExpressionBuilder } from 'typeorm';
 import { LIKE_ESCAPE_CHARACTER } from '../validator/types.js';
 import type { ValidatedExpression, ValidatedField, ValidatedPredicate } from '../validator/types.js';
+import { fuseFulltext } from './fulltext.js';
 
 type Combinator = 'and' | 'or';
 
@@ -17,9 +18,22 @@ function nextParameterName(): string {
   return `search_cop_${parameterCounter}`;
 }
 
+function buildFulltextCondition(field: { field: string, fulltext: 'postgres_fulltext', term: string, language: string }): Rendered {
+  const parameterName = nextParameterName();
+
+  return {
+    sql: `${field.field} @@ websearch_to_tsquery('${field.language}', :${parameterName})`,
+    parameters: { [parameterName]: field.term },
+  };
+}
+
 function buildFieldCondition(field: ValidatedField): Rendered {
   if ('alwaysFalse' in field) {
     return { sql: '1 = 0', parameters: {} };
+  }
+
+  if ('fulltext' in field) {
+    return buildFulltextCondition(field);
   }
 
   if (!('value' in field)) {
@@ -79,7 +93,9 @@ export function compile<Entity extends ObjectLiteral>(options: CompileOptions<En
 }
 
 export function compileCondition(expression: ValidatedExpression): Brackets {
-  return new Brackets((builder) => applyExpression({ builder, expression }));
+  const fused = fuseFulltext(expression);
+
+  return new Brackets((builder) => applyExpression({ builder, expression: fused }));
 }
 
 function applyExpression(

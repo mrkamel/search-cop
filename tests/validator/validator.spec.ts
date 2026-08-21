@@ -715,3 +715,54 @@ describe('validate: negation (NOT)', () => {
     });
   });
 });
+
+describe('validate: "postgres_fulltext" attributes', () => {
+  const fulltextAttributes: AttributeMap = {
+    _all: { type: 'postgres_fulltext', fields: ["to_tsvector('simple', name || ' ' || description)"] },
+  };
+
+  it('resolves a bare term to a fulltext field, defaulting the language to "simple"', () => {
+    expect(validate({ expression: parse('word1'), attributes: fulltextAttributes })).toMatchObject({
+      fields: [{ field: "to_tsvector('simple', name || ' ' || description)", fulltext: 'postgres_fulltext', term: 'word1', language: 'simple' }],
+    });
+  });
+
+  it('uses an explicit "language" option instead of the default', () => {
+    const attributesWithLanguage: AttributeMap = {
+      _all: { type: 'postgres_fulltext', language: 'english', fields: ['search_vector'] },
+    };
+
+    expect(validate({ expression: parse('word1'), attributes: attributesWithLanguage })).toMatchObject({
+      fields: [{ field: 'search_vector', language: 'english' }],
+    });
+  });
+
+  it('rejects an explicit "=" — only the bare colon form is supported', () => {
+    const [error] = tryCatch(() => validate({ expression: parse('_all:=word1'), attributes: fulltextAttributes }));
+
+    expect(error).toBeInstanceOf(SearchCopError);
+    expect((error as SearchCopError).code).toBe('INVALID_OPERATOR');
+  });
+
+  it('rejects ordering operators', () => {
+    for (const operator of ['>', '>=', '<', '<=']) {
+      const [error] = tryCatch(() => validate({ expression: parse(`_all:${operator}word1`), attributes: fulltextAttributes }));
+
+      expect(error).toBeInstanceOf(SearchCopError);
+      expect((error as SearchCopError).code).toBe('INVALID_OPERATOR');
+    }
+  });
+
+  it('resolves every "fields" entry independently for a multi-field fulltext attribute', () => {
+    const multiFieldFulltextAttributes: AttributeMap = {
+      _all: { type: 'postgres_fulltext', fields: ['title_vector', 'body_vector'] },
+    };
+
+    expect(validate({ expression: parse('word1'), attributes: multiFieldFulltextAttributes })).toMatchObject({
+      fields: [
+        { field: 'title_vector', term: 'word1' },
+        { field: 'body_vector', term: 'word1' },
+      ],
+    });
+  });
+});
