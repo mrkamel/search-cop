@@ -11,6 +11,9 @@ jobs:
     strategy:
       matrix:
         node-version: [22, 24]
+        database: [sqlite, postgres]
+    env:
+      DATABASE: ${{ matrix.database }}
     services:
       postgres:
         image: postgres:17
@@ -36,4 +39,3 @@ jobs:
       - run: pnpm run typecheck
       - run: pnpm run lint
       - run: pnpm test
-      - run: DATABASE=postgres pnpm test
