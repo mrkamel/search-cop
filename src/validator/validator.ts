@@ -81,10 +81,7 @@ function validatePredicate({ predicate, attributes }: { predicate: PredicateExpr
     );
   }
 
-  // Rewrites into a synthetic predicate against the target attribute — e.g. "status:online"
-  // becomes { field: 'tags', value: 'status:online' } — and re-enters this same function, so
-  // multi-field expansion, fulltext resolution, and fusion all just see a normal predicate
-  // against a real attribute, with no separate code path of their own.
+  // Rewrites into a synthetic predicate against the target attribute and re-validates, so tag lookups reuse the normal predicate path.
   if (attribute.type === 'tag') {
     if (attribute.attribute === predicate.field) {
       throw new SearchCopError(
@@ -174,9 +171,7 @@ function resolveValue(
 
     if (tokenize && tokenize(term).length === 0) return null;
 
-    // "to_tsquery"'s wildcard rendering also splits a multi-word term on whitespace
-    // (src/compiler/fulltext.ts) — a whitespace-only wildcarded term (e.g. a quoted "   "*)
-    // would otherwise render as an empty tsquery string instead of never matching.
+    // A whitespace-only wildcarded term would otherwise render as an empty (matches-everything) tsquery.
     if (dialect === 'to_tsquery' && wildcard && DEFAULT_TOKENIZE(term).length === 0) return null;
 
     return {
@@ -202,14 +197,12 @@ function resolveValue(
     return { value: foldCase({ value: pattern, caseSensitive }), operator: 'LIKE', caseSensitive };
   }
 
-  // A field-level override may declare a stricter type than the outer attribute, whose
-  // operator was only validated against the outer type.
+  // Field-level overrides may declare a stricter type than the outer attribute's already-validated operator.
   if (!OPERATORS_BY_TYPE[definition.type].includes(operator)) {
     return null;
   }
 
-  // "tag" only makes sense as a top-level attribute (validatePredicate redirects it before
-  // reaching here) — as a field-level override it has no meaningful value to convert.
+  // "tag" only makes sense as a top-level attribute, not a field-level override.
   if (definition.type === 'tag') {
     return null;
   }
@@ -247,8 +240,6 @@ function resolveFulltextTerm({ value, predicate }: { value: string, predicate: P
   return { term, wildcard };
 }
 
-// "*" -> "%", "\*" -> a literal "*", everything else untouched. A bare "*" not at the
-// start/end of "value" is a malformed wildcard attempt and throws.
 function replaceWildcards({ value, predicate }: { value: string, predicate: PredicateExpression }): string {
   return value.replace(/\\.|\*/g, (match, offset: number, fullString: string) => {
     if (match === '*' && offset !== 0 && offset !== fullString.length - 1) {

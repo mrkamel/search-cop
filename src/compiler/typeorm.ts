@@ -35,8 +35,7 @@ function buildFulltextCondition(field: FulltextValidatedField): Rendered {
 
   const parameters: ObjectLiteral = { [parameterName]: query };
 
-  // A raw ::tsquery cast (the "tsquery" dialect) takes no config argument, so there's
-  // nothing to bind for it — only "to_tsquery" needs a language parameter.
+  // Only "to_tsquery" takes a language config argument; a raw ::tsquery cast has nothing to bind.
   const languageParameterName = field.fulltext === 'to_tsquery' ? nextParameterName() : undefined;
 
   if (languageParameterName) parameters[languageParameterName] = field.language;
@@ -154,8 +153,7 @@ function applyBrackets(
   applyWhere({ builder, combinator, condition: brackets });
 }
 
-// Rendered to a flat string, not nested Brackets — TypeORM's Brackets can't be read back
-// as SQL, so a negated group couldn't otherwise be wrapped in one COALESCE(NOT(...), FALSE).
+// Flat string, not Brackets — Brackets can't be read back as SQL to wrap in COALESCE(NOT(...)).
 function applyNot(
   { builder, expression, combinator }:
   { builder: WhereExpressionBuilder, expression: ValidatedExpression, combinator: Combinator }

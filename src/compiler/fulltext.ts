@@ -60,9 +60,7 @@ function combineTerms(
   return rendered.join(combinator === 'or' ? ' | ' : ' & ');
 }
 
-// `to_tsquery()` re-tokenizes a quoted lexeme itself, so a multi-word value only ever needs
-// manual splitting for the wildcard case (to place ":*" on just the last word) — a plain
-// value is left as one lexeme and to_tsquery's own parser/dictionary handles the rest.
+// to_tsquery() re-tokenizes lexemes itself, so splitting is only needed to place ":*" for wildcards.
 function renderToTsqueryTerm({ value, wildcard, phrases }: { value: string, wildcard: boolean, phrases: boolean }): string {
   if (!wildcard) return quoteTsqueryLexeme(value);
 
@@ -78,9 +76,7 @@ function combineToTsquery({ combinator, terms, phrases }: FulltextCombinerOption
   return combineTerms({ combinator, terms, renderTerm: (term) => renderToTsqueryTerm({ value: term.value, wildcard: term.wildcard, phrases }) });
 }
 
-// Cast directly to ::tsquery rather than calling to_tsquery() — a raw cast takes each quoted
-// lexeme literally (no parser, no dictionary), so `tokenize` fully controls what a lexeme is,
-// unlike to_tsquery() which re-tokenizes quoted content regardless of how it's split here.
+// Raw ::tsquery cast takes lexemes literally, so `tokenize` (not Postgres) controls splitting.
 function renderTsqueryLiteralTerm(
   { value, wildcard, phrases, tokenize }:
   { value: string, wildcard: boolean, phrases: boolean, tokenize: (value: string) => string[] },
