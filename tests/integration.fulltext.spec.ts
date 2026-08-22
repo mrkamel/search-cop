@@ -383,4 +383,57 @@ describe.skipIf(process.env.DATABASE !== 'postgres')('search: postgres fulltext 
       expect(articles.map((article) => article.id)).toEqual([match.id]);
     });
   });
+
+  describe('type: "tag" (redirects "field:value" into a literal fulltext term)', () => {
+    const tagAttributes: AttributeMap = {
+      status: { type: 'tag', attribute: 'tags' },
+      priority: { type: 'tag', attribute: 'tags' },
+      tags: {
+        type: 'fulltext',
+        dialect: 'tsquery',
+        fields: ["array_to_tsvector(regexp_split_to_array(title, '\\s+'))"],
+      },
+    };
+
+    it('matches "status:online" as a single literal token, not two separate words', async () => {
+      const match = await createArticle({ title: 'status:online', body: 'other' });
+
+      await createArticle({ title: 'status online', body: 'other' });
+
+      const articles = await search({ repository: ArticleRepository, query: 'status:online', attributes: tagAttributes }).getMany();
+
+      expect(articles.map((article) => article.id)).toEqual([match.id]);
+    });
+
+    it('does not match a different value for the same tag', async () => {
+      await createArticle({ title: 'status:online', body: 'other' });
+
+      const articles = await search({ repository: ArticleRepository, query: 'status:offline', attributes: tagAttributes }).getMany();
+
+      expect(articles.map((article) => article.id)).toEqual([]);
+    });
+
+    it('fuses two different "tag" attributes redirecting to the same target into one @@ call', async () => {
+      const match = await createArticle({ title: 'status:online priority:high', body: 'other' });
+
+      await createArticle({ title: 'status:online', body: 'other' });
+      await createArticle({ title: 'priority:high', body: 'other' });
+
+      const articles = await search({
+        repository: ArticleRepository,
+        query: 'status:online priority:high',
+        attributes: tagAttributes,
+      }).getMany();
+
+      expect(articles.map((article) => article.id)).toEqual([match.id]);
+    });
+
+    it('throws "UNKNOWN_ATTRIBUTE" when the target attribute is not declared', () => {
+      const brokenTagAttributes: AttributeMap = { status: { type: 'tag', attribute: 'nonexistent' } };
+
+      expect(() => search({ repository: ArticleRepository, query: 'status:online', attributes: brokenTagAttributes })).toThrow(
+        expect.objectContaining({ code: 'UNKNOWN_ATTRIBUTE' }),
+      );
+    });
+  });
 });

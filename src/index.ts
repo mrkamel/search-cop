@@ -49,6 +49,7 @@ export type {
   NullAttributeDefinition,
   NumberAttributeDefinition,
   StringAttributeDefinition,
+  TagAttributeDefinition,
   UuidAttributeDefinition,
 } from './attributes/types.js';
 

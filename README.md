@@ -76,6 +76,7 @@ Only attributes declared in `attributes` may be queried. Supported types:
 | `uuid`     | `string`       | `=`                               |
 | `null`     | none — compiles to `IS NULL`/`IS NOT NULL` | `=`  |
 | `fulltext` | `string`       | `:` only                          |
+| `tag`      | `string` — redirected into a `fulltext` attribute | `:` only |
 
 `enum` attributes also require a `values: string[]` list, or a `values: Record<string, string>`
 map to translate the query-facing value into a different underlying value, e.g.
@@ -654,6 +655,52 @@ body can't be inlined into the surrounding query the way a single-expression fun
 Postgres also flatly rejects a bare subquery as an index expression, which is why this needs a
 wrapper function rather than an inline expression.
 
+#### `type: 'tag'` — `key:value` syntax against a literal fulltext attribute
+
+Typing `status:online` directly against a `tsquery`-dialect attribute doesn't do what it looks
+like it should — search-cop's own grammar parses `field<op>value` first, so `status:online` as
+a top-level query term means "attribute `status`, operator `:`, value `online`", not a literal
+string to match. Getting the literal string `status:online` matched requires writing it
+explicitly as a quoted value against the actual attribute, e.g. `tags:"status:online"`.
+
+A `tag` attribute makes the natural syntax work by rewriting the predicate before it's resolved:
+`status:online` compiles exactly as if the query had been `tags:"status:online"` against the
+`attribute` it points to (normally a `dialect: 'tsquery'` fulltext attribute, so the literal
+`:` survives):
+
+```ts
+attributes: {
+  status: { type: 'tag', attribute: 'tags' },
+  priority: { type: 'tag', attribute: 'tags' },
+  tags: {
+    type: 'fulltext',
+    dialect: 'tsquery',
+    fields: ["array_to_tsvector(regexp_split_to_array(tags, '\\s+'))"],
+  },
+}
+```
+
+```text
+status:online                    // tags @@ ('''status:online''')::tsquery
+status:online priority:high      // tags @@ ('''status:online'' & ''priority:high''')::tsquery   (fused)
+```
+
+Only `:` is supported (no `=`, no ordering operators), same as `fulltext`. Wildcards, negation,
+and escaping all work exactly as they do for any other bare-colon term — a trailing `*` (e.g.
+`status:on*`) makes the *whole* reconstructed token a prefix match, not just the part after the
+colon. Since the rewritten predicate is indistinguishable from an ordinary predicate against the
+target attribute, it goes through the exact same resolution and [fusion](#fusion) as any other
+fulltext term — several `tag` attributes pointing at the same target (like `status` and
+`priority` above) fuse into a single `@@` call when combined in a query, exactly like two
+predicates against the same named `fulltext` attribute already do.
+
+search-cop doesn't validate that `attribute` points at a `fulltext` attribute (or that its
+`dialect` is `'tsquery'`) — same "config is your responsibility" contract as [`fields` being raw
+SQL](#fields-are-raw-sql). Pointing it at a nonexistent attribute throws `UNKNOWN_ATTRIBUTE`
+(the rewritten predicate is validated exactly like any other), but pointing it at, say, a
+`dialect: 'to_tsquery'` attribute won't error — it'll just silently re-split the literal `:`
+via Postgres's own parser, the same as using that dialect directly.
+
 #### Fusion
 
 Several bare terms against the same `fulltext` attribute, combined at the same `AND`/`OR` level
@@ -694,6 +741,7 @@ Invalid queries throw a `SearchCopError` with a `code`:
   against an undeclared `_all` — see [Default field](#default-field))
 - `INVALID_OPERATOR` — the operator is not supported for the attribute's type (e.g. `status:>online` for an `enum`)
 - `INVALID_WILDCARD` — a bare `*` appears somewhere other than the start/end of a bare-colon `string` value (e.g. `name:Pet*Other`; see [Wildcards](#wildcards))
+- `CIRCULAR_TAG_REFERENCE` — a `tag` attribute's `attribute` points at itself (see [`type: 'tag'`](#type-tag--keyvalue-syntax-against-a-literal-fulltext-attribute))
 
 Note there's no error for a value that doesn't fit its type (an invalid uuid, an unknown
 enum value, ...) — see [Unparseable values never error](#unparseable-values-never-error).

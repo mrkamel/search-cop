@@ -132,7 +132,7 @@ function isFulltextField(field: ValidatedField): field is FulltextField {
 }
 
 function candidateKey(candidate: FulltextCandidate): string {
-  return JSON.stringify([candidate.engine, candidate.fieldShape, candidate.languages]);
+  return JSON.stringify([candidate.engine, candidate.fieldShape, candidate.languages, candidate.phrases]);
 }
 
 function asFulltextCandidate(child: ValidatedExpression): FulltextCandidate | null {

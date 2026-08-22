@@ -846,6 +846,12 @@ describe('validate: "fulltext" attributes', () => {
     });
   });
 
+  it('compiles a whitespace-only wildcarded term to "alwaysFalse" instead of an empty tsquery', () => {
+    expect(validate({ expression: parse('"   *"'), attributes: fulltextAttributes })).toMatchObject({
+      fields: [{ alwaysFalse: true }],
+    });
+  });
+
   it('rejects a leading "*" — only a trailing wildcard is supported', () => {
     const [error] = tryCatch(() => validate({ expression: parse('*word1'), attributes: fulltextAttributes }));
 
@@ -863,6 +869,75 @@ describe('validate: "fulltext" attributes', () => {
   it('unescapes a trailing "\\*" to a literal "*", not a wildcard', () => {
     expect(validate({ expression: parse('word1\\*'), attributes: fulltextAttributes })).toMatchObject({
       fields: [{ term: 'word1*', wildcard: false }],
+    });
+  });
+});
+
+describe('validate: "tag" attributes', () => {
+  const tagAttributes: AttributeMap = {
+    status: { type: 'tag', attribute: 'tags' },
+    priority: { type: 'tag', attribute: 'tags' },
+    tags: { type: 'fulltext', dialect: 'tsquery', fields: ["array_to_tsvector(regexp_split_to_array(tags, '\\s+'))"] },
+  };
+
+  it('rewrites "field:value" into a literal fulltext term against the target attribute', () => {
+    expect(validate({ expression: parse('status:online'), attributes: tagAttributes })).toMatchObject({
+      fields: [{ field: "array_to_tsvector(regexp_split_to_array(tags, '\\s+'))", fulltext: 'tsquery', term: 'status:online' }],
+    });
+  });
+
+  it('resolves the target attribute\'s own options (dialect, tokenize, phrases)', () => {
+    const [field] = (validate({ expression: parse('status:online'), attributes: tagAttributes }) as ValidatedPredicate)
+      .fields as { tokenize?: (value: string) => string[] }[];
+
+    expect(field?.tokenize?.('status:online')).toEqual(['status:online']);
+  });
+
+  it('throws "UNKNOWN_ATTRIBUTE" when the target attribute is not declared', () => {
+    const brokenTagAttributes: AttributeMap = { status: { type: 'tag', attribute: 'nonexistent' } };
+    const [error] = tryCatch(() => validate({ expression: parse('status:online'), attributes: brokenTagAttributes }));
+
+    expect(error).toBeInstanceOf(SearchCopError);
+    expect((error as SearchCopError).code).toBe('UNKNOWN_ATTRIBUTE');
+  });
+
+  it('throws "CIRCULAR_TAG_REFERENCE" instead of recursing forever when a "tag" points at itself', () => {
+    const selfReferencingTagAttributes: AttributeMap = { status: { type: 'tag', attribute: 'status' } };
+    const [error] = tryCatch(() => validate({ expression: parse('status:online'), attributes: selfReferencingTagAttributes }));
+
+    expect(error).toBeInstanceOf(SearchCopError);
+    expect((error as SearchCopError).code).toBe('CIRCULAR_TAG_REFERENCE');
+  });
+
+  it('rejects an explicit "=" — only the bare colon form is supported, same as fulltext', () => {
+    const [error] = tryCatch(() => validate({ expression: parse('status:=online'), attributes: tagAttributes }));
+
+    expect(error).toBeInstanceOf(SearchCopError);
+    expect((error as SearchCopError).code).toBe('INVALID_OPERATOR');
+  });
+
+  it('rejects ordering operators', () => {
+    for (const operator of ['>', '>=', '<', '<=']) {
+      const [error] = tryCatch(() => validate({ expression: parse(`status:${operator}online`), attributes: tagAttributes }));
+
+      expect(error).toBeInstanceOf(SearchCopError);
+      expect((error as SearchCopError).code).toBe('INVALID_OPERATOR');
+    }
+  });
+
+  it('supports a trailing "*" wildcard on the reconstructed term', () => {
+    expect(validate({ expression: parse('status:online*'), attributes: tagAttributes })).toMatchObject({
+      fields: [{ term: 'status:online', wildcard: true }],
+    });
+  });
+
+  it('two different "tag" attributes both resolve against the same target field (fusion happens at compile time)', () => {
+    expect(validate({ expression: parse('status:online priority:high'), attributes: tagAttributes })).toMatchObject({
+      type: 'and',
+      children: [
+        { type: 'predicate', fields: [{ term: 'status:online' }] },
+        { type: 'predicate', fields: [{ term: 'priority:high' }] },
+      ],
     });
   });
 });

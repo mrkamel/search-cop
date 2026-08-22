@@ -591,6 +591,35 @@ describe('compile: "fulltext" attributes with dialect "tsquery"', () => {
   });
 });
 
+describe('compile: "tag" attributes', () => {
+  const tagAttributes: AttributeMap = {
+    status: { type: 'tag', attribute: 'tags' },
+    priority: { type: 'tag', attribute: 'tags' },
+    tags: { type: 'fulltext', dialect: 'tsquery', fields: ["array_to_tsvector(regexp_split_to_array(name, '\\s+'))"] },
+  };
+
+  it('compiles "field:value" to a literal fulltext match against the target attribute', () => {
+    const [sql, params] = getSqlAndParams(compileQuery({ query: 'status:online', attributeMap: tagAttributes }));
+
+    expect(sql).toContain(`array_to_tsvector(regexp_split_to_array(name, '\\s+')) @@ (?)::tsquery`);
+    expect(params).toEqual([`'status:online'`]);
+  });
+
+  it('fuses two different "tag" attributes redirecting to the same target into one @@ call', () => {
+    const [sql, params] = getSqlAndParams(compileQuery({ query: 'status:online priority:high', attributeMap: tagAttributes }));
+
+    expect(sql.match(/@@/g)).toHaveLength(1);
+    expect(params).toEqual([`'status:online' & 'priority:high'`]);
+  });
+
+  it('fuses a "tag" predicate with a plain bare term against the same underlying target attribute', () => {
+    const [sql, params] = getSqlAndParams(compileQuery({ query: 'status:online word', attributeMap: { ...tagAttributes, _all: tagAttributes.tags! } }));
+
+    expect(sql.match(/@@/g)).toHaveLength(1);
+    expect(params).toEqual([`'status:online' & 'word'`]);
+  });
+});
+
 describe('compileCondition', () => {
   function compileConditionQuery(query: string, attributeMap: AttributeMap = attributes): Brackets {
     const validated = validate({ expression: parse(query), attributes: attributeMap });

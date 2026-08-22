@@ -36,6 +36,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   direct siblings; a `NOT` wrapping a whole group, or terms split across nested groups with
   other attributes mixed in, still compile correctly, just without fusing. See
   [Full-text search (Postgres)](README.md#full-text-search-postgres).
+- `tag` attribute type — rewrites a `field:value` predicate into a literal fulltext term
+  against another (`attribute: string`) attribute, so `status:online` compiles exactly as if
+  the query had been `tags:"status:online"` against the `fulltext` attribute `attribute` points
+  to. The rewritten predicate is validated and resolved exactly like any other predicate
+  against the target attribute, so it fuses with other terms against that same target
+  (including from other `tag` attributes pointing at it) with no separate code path. See
+  [Full-text search (Postgres)](README.md#full-text-search-postgres).
 
 ## [0.2.0]
 

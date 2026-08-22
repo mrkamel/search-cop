@@ -1,4 +1,4 @@
-export type AttributeType = 'string' | 'number' | 'boolean' | 'date' | 'datetime' | 'enum' | 'uuid' | 'null' | 'fulltext';
+export type AttributeType = 'string' | 'number' | 'boolean' | 'date' | 'datetime' | 'enum' | 'uuid' | 'null' | 'fulltext' | 'tag';
 export type AttributeFieldType = { field: string } & AttributeDefinition;
 export type AttributeField = string | AttributeFieldType;
 
@@ -55,6 +55,14 @@ export interface NullAttributeDefinition extends BaseAttributeDefinition {
   isNotNull: string[];
 }
 
+// Redirects a "field:value" predicate into a literal fulltext term against another attribute —
+// "status:online" with { type: 'tag', attribute: 'tags' } compiles exactly as if the query had
+// been "tags:\"status:online\"" against that (normally dialect: 'tsquery') fulltext attribute.
+export interface TagAttributeDefinition extends BaseAttributeDefinition {
+  type: 'tag';
+  attribute: string;
+}
+
 export type AttributeDefinition =
   | StringAttributeDefinition
   | NumberAttributeDefinition
@@ -64,7 +72,8 @@ export type AttributeDefinition =
   | EnumAttributeDefinition
   | UuidAttributeDefinition
   | NullAttributeDefinition
-  | FulltextAttributeDefinition;
+  | FulltextAttributeDefinition
+  | TagAttributeDefinition;
 
 export type AttributeMap = Record<string, AttributeDefinition>;
 
@@ -73,6 +82,7 @@ export type AttributeValue<T extends AttributeDefinition> = T extends
   | EnumAttributeDefinition
   | UuidAttributeDefinition
   | FulltextAttributeDefinition
+  | TagAttributeDefinition
   ? string
   : T extends NumberAttributeDefinition
     ? number

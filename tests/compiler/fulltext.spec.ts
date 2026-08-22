@@ -160,6 +160,15 @@ describe('fuseFulltext: fusion boundaries', () => {
     expect(fuseFulltext(expression)).toEqual(expression);
   });
 
+  it('does not fuse leaves using different "phrases" settings, even on the same field', () => {
+    const expression = and(
+      predicate(fulltextField({ field: '_all', term: 'word1', phrases: true })),
+      predicate(fulltextField({ field: '_all', term: 'word2', phrases: false })),
+    );
+
+    expect(fuseFulltext(expression)).toEqual(expression);
+  });
+
   it('does not push a NOT wrapping a multi-field predicate down into its fields', () => {
     const grouped = predicate(fulltextField({ field: 'vec1', term: 'x' }), fulltextField({ field: 'vec2', term: 'y' }));
     const expression = and(predicate(fulltextField({ field: '_all', term: 'word1' })), not(grouped));

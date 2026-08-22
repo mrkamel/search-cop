@@ -7,6 +7,7 @@ import type {
   AttributeType,
   FulltextAttributeDefinition,
   NullAttributeDefinition,
+  TagAttributeDefinition,
 } from '../attributes/types.js';
 import { LIKE_ESCAPE_CHARACTER } from './types.js';
 import type { FulltextEngine, ValidatedExpression, ValidatedField, ValidatedOperator, ValidatedPredicate, ValidatedValue } from './types.js';
@@ -23,6 +24,7 @@ const OPERATORS_BY_TYPE: Record<AttributeType, Operator[]> = {
   uuid: [':', '='],
   null: [':', '='],
   fulltext: [':'],
+  tag: [':'],
 };
 
 const DEFAULT_TOKENIZE = (value: string): string[] => value.split(/\s+/).filter((word) => word.length > 0);
@@ -77,6 +79,25 @@ function validatePredicate({ predicate, attributes }: { predicate: PredicateExpr
       `Operator "${predicate.operator}" is not supported for attribute "${predicate.field}" of type "${attribute.type}".`,
       predicate.position,
     );
+  }
+
+  // Rewrites into a synthetic predicate against the target attribute — e.g. "status:online"
+  // becomes { field: 'tags', value: 'status:online' } — and re-enters this same function, so
+  // multi-field expansion, fulltext resolution, and fusion all just see a normal predicate
+  // against a real attribute, with no separate code path of their own.
+  if (attribute.type === 'tag') {
+    if (attribute.attribute === predicate.field) {
+      throw new SearchCopError(
+        'CIRCULAR_TAG_REFERENCE',
+        `Attribute "${predicate.field}" has type "tag" with "attribute" pointing at itself.`,
+        predicate.position,
+      );
+    }
+
+    return validatePredicate({
+      predicate: { type: 'predicate', field: attribute.attribute, operator: ':', value: `${predicate.field}:${predicate.value}`, position: predicate.position },
+      attributes,
+    });
   }
 
   if (attribute.fields?.length && attribute.fields.length > 1 && !isEqualityOperator(predicate.operator)) {
@@ -153,6 +174,11 @@ function resolveValue(
 
     if (tokenize && tokenize(term).length === 0) return null;
 
+    // "to_tsquery"'s wildcard rendering also splits a multi-word term on whitespace
+    // (src/compiler/fulltext.ts) — a whitespace-only wildcarded term (e.g. a quoted "   "*)
+    // would otherwise render as an empty tsquery string instead of never matching.
+    if (dialect === 'to_tsquery' && wildcard && DEFAULT_TOKENIZE(term).length === 0) return null;
+
     return {
       fulltext: dialect,
       term,
@@ -179,6 +205,12 @@ function resolveValue(
   // A field-level override may declare a stricter type than the outer attribute, whose
   // operator was only validated against the outer type.
   if (!OPERATORS_BY_TYPE[definition.type].includes(operator)) {
+    return null;
+  }
+
+  // "tag" only makes sense as a top-level attribute (validatePredicate redirects it before
+  // reaching here) — as a field-level override it has no meaningful value to convert.
+  if (definition.type === 'tag') {
     return null;
   }
 
@@ -256,7 +288,7 @@ function resolveNull(
 
 function convertValue(
   { value, definition }:
-  { value: string, definition: Exclude<AttributeDefinition, NullAttributeDefinition | FulltextAttributeDefinition> },
+  { value: string, definition: Exclude<AttributeDefinition, NullAttributeDefinition | FulltextAttributeDefinition | TagAttributeDefinition> },
 ): ValidatedValue | null {
   switch (definition.type) {
     case 'string':
