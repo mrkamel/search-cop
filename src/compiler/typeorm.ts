@@ -1,13 +1,16 @@
 import { Brackets, type ObjectLiteral, type Repository, type SelectQueryBuilder, type WhereExpressionBuilder } from 'typeorm';
 import { LIKE_ESCAPE_CHARACTER } from '../validator/types.js';
 import type { ValidatedExpression, ValidatedField, ValidatedPredicate } from '../validator/types.js';
+import { combineFulltextTerms, fuseFulltext, renderFulltextCondition } from './fulltext.js';
 
 type Combinator = 'and' | 'or';
 
-interface Rendered {
+type Rendered = {
   sql: string;
   parameters: ObjectLiteral;
-}
+};
+
+type FulltextValidatedField = Extract<ValidatedField, { fulltext: unknown }>;
 
 let parameterCounter = 0;
 
@@ -17,9 +20,39 @@ function nextParameterName(): string {
   return `search_cop_${parameterCounter}`;
 }
 
+function buildFulltextCondition(field: FulltextValidatedField): Rendered {
+  const parameterName = nextParameterName();
+
+  const query = 'combinedQuery' in field
+    ? field.combinedQuery
+    : combineFulltextTerms({
+      engine: field.fulltext,
+      combinator: 'and',
+      terms: [{ value: field.term, wildcard: field.wildcard, negated: false }],
+      phrases: field.phrases,
+      tokenize: field.tokenize,
+    });
+
+  const parameters: ObjectLiteral = { [parameterName]: query };
+
+  // Only "to_tsquery" takes a language config argument; a raw ::tsquery cast has nothing to bind.
+  const languageParameterName = field.fulltext === 'to_tsquery' ? nextParameterName() : undefined;
+
+  if (languageParameterName) parameters[languageParameterName] = field.language;
+
+  return {
+    sql: renderFulltextCondition({ engine: field.fulltext, field: field.field, parameterName, languageParameterName }),
+    parameters,
+  };
+}
+
 function buildFieldCondition(field: ValidatedField): Rendered {
   if ('alwaysFalse' in field) {
     return { sql: '1 = 0', parameters: {} };
+  }
+
+  if ('fulltext' in field) {
+    return buildFulltextCondition(field);
   }
 
   if (!('value' in field)) {
@@ -79,7 +112,9 @@ export function compile<Entity extends ObjectLiteral>(options: CompileOptions<En
 }
 
 export function compileCondition(expression: ValidatedExpression): Brackets {
-  return new Brackets((builder) => applyExpression({ builder, expression }));
+  const fused = fuseFulltext(expression);
+
+  return new Brackets((builder) => applyExpression({ builder, expression: fused }));
 }
 
 function applyExpression(
@@ -118,8 +153,7 @@ function applyBrackets(
   applyWhere({ builder, combinator, condition: brackets });
 }
 
-// Rendered to a flat string, not nested Brackets — TypeORM's Brackets can't be read back
-// as SQL, so a negated group couldn't otherwise be wrapped in one COALESCE(NOT(...), FALSE).
+// Flat string, not Brackets — Brackets can't be read back as SQL to wrap in COALESCE(NOT(...)).
 function applyNot(
   { builder, expression, combinator }:
   { builder: WhereExpressionBuilder, expression: ValidatedExpression, combinator: Combinator }

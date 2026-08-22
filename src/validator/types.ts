@@ -1,36 +1,45 @@
 import type { Operator } from '../ast/types.js';
 
-export type ValidatedValue = string | number | boolean | Date;
-
 // Not "\": MySQL treats it as a string-escape char, breaking the literal there.
 export const LIKE_ESCAPE_CHARACTER = '!';
 
+export type ValidatedValue = string | number | boolean | Date;
 export type ValidatedOperator = Exclude<Operator, ':'> | 'LIKE';
+export type FulltextEngine = 'to_tsquery' | 'tsquery';
 
 export type ValidatedField =
   | { alwaysFalse: true }
   | { field: string, value: ValidatedValue, operator: ValidatedOperator, caseSensitive: boolean | 'lower' | 'upper' }
-  | { field: string, operator: 'IS NULL' | 'IS NOT NULL' };
+  | { field: string, operator: 'IS NULL' | 'IS NOT NULL' }
+  | {
+    field: string, fulltext: FulltextEngine, term: string, wildcard: boolean, phrases: boolean,
+    language: string, tokenize?: (value: string) => string[],
+  }
+  | {
+    field: string, fulltext: FulltextEngine, combinedQuery: string,
+    language: string,
+  }
+  ;
 
-export interface ValidatedPredicate {
-  type: 'predicate';
-  fields: ValidatedField[];
-  position?: number;
-}
+export type ValidatedPredicate = {
+  type: 'predicate',
+  fields: ValidatedField[],
+  position?: number,
+};
 
-export interface ValidatedAnd {
-  type: 'and';
-  children: ValidatedExpression[];
-}
+export type ValidatedAnd = {
+  type: 'and',
+  children: ValidatedExpression[],
+};
 
-export interface ValidatedOr {
-  type: 'or';
-  children: ValidatedExpression[];
-}
+export type ValidatedOr = {
+  type: 'or',
+  children: ValidatedExpression[],
+};
 
-export interface ValidatedNot {
-  type: 'not';
-  child: ValidatedExpression;
-}
+export type ValidatedNot = {
+  type: 'not',
+  child: ValidatedExpression,
+};
 
 export type ValidatedExpression = ValidatedAnd | ValidatedOr | ValidatedNot | ValidatedPredicate;

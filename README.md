@@ -75,6 +75,8 @@ Only attributes declared in `attributes` may be queried. Supported types:
 | `enum`     | `string`       | `=`                               |
 | `uuid`     | `string`       | `=`                               |
 | `null`     | none — compiles to `IS NULL`/`IS NOT NULL` | `=`  |
+| `fulltext` | `string`       | `:` only                          |
+| `tag`      | `string` — redirected into a `fulltext` attribute | `:` only |
 
 `enum` attributes also require a `values: string[]` list, or a `values: Record<string, string>`
 map to translate the query-facing value into a different underlying value, e.g.
@@ -518,6 +520,203 @@ createdAt:>=2026-01-01T10:00:00             // 2026-01-01T10:00:00.000Z (UTC)
 createdAt:>=2026-01-01T10:00:00+02:00       // 2026-01-01T08:00:00.000Z
 ```
 
+### Full-text search (Postgres)
+
+A `fulltext` attribute matches against a `tsvector`. `fields` must already evaluate to one —
+either a precomputed/indexed column, or a SQL expression that builds one — search-cop never
+wraps or casts it for you, same as any other [raw `fields` entry](#fields-are-raw-sql). A
+required `dialect` controls how a query term becomes the `tsquery` value compared against it:
+`'to_tsquery'` hands the term to Postgres's own text-search parser and dictionaries;
+`'tsquery'` bypasses them entirely for literal, tokenizer-controlled matching. There's no
+default — `dialect` must always be set explicitly, since the two behave differently enough
+that picking one silently on a caller's behalf would be surprising. Only `:` is supported for
+either dialect (no `=`, no ordering operators).
+
+#### `dialect: 'to_tsquery'`
+
+Compiles to `@@ to_tsquery(...)`:
+
+```ts
+attributes: {
+  _all: {
+    type: 'fulltext',
+    dialect: 'to_tsquery',
+    fields: ["to_tsvector('simple', title || ' ' || body)"],
+  },
+}
+```
+
+```text
+pizza                 // to_tsvector(...) @@ to_tsquery('simple', '''pizza''')
+pizza pasta           // ...@@ to_tsquery('simple', '''pizza'' & ''pasta''')       (AND)
+pizza OR pasta        // ...@@ to_tsquery('simple', '''pizza'' | ''pasta''')       (OR)
+pizza -pasta          // ...@@ to_tsquery('simple', '''pizza'' & !''pasta''')      (NOT)
+pizza*                // ...@@ to_tsquery('simple', '''pizza'':*')                (prefix wildcard)
+```
+
+Every term is bound as a plain parameter and quoted as its own `tsquery` lexeme (any embedded
+`'` is doubled, per `tsquery`'s own quoting rule) before being spliced into the query text — a
+term is never concatenated into that text raw. That matters for correctness, not just safety:
+`to_tsquery` requires its own operators (`&`/`|`/`!`) between lexemes, so a value containing one
+of those characters would otherwise either silently change the query's meaning or throw a syntax
+error outright, depending on where it landed.
+
+A trailing `*` on a bare term makes it a prefix match (`to_tsquery`'s `:*`, applied after the
+closing quote) — the only wildcard shape `tsquery` supports; there's no suffix/contains
+equivalent. A `*` anywhere other than the end of a value throws `INVALID_WILDCARD`, same as for
+a `string` attribute.
+
+An optional `language` (default `'simple'` — no stemming, no stopwords) sets the `regconfig`
+passed to `to_tsquery` — it should match whatever produced the `tsvector` in `fields`. Set it to
+`'english'` (or another language config) for stemming/stopword handling.
+
+A multi-word quoted value (e.g. `"red shoes"`) is left as one quoted lexeme and joined into a
+phrase (`<->`) by `to_tsquery`'s own parser — set `phrases: false` to join it with `&` (plain
+AND, ignoring word order/adjacency) instead.
+
+#### `dialect: 'tsquery'` — literal, tokenizer-controlled matching
+
+`to_tsquery` always re-runs Postgres's text-search parser and dictionary over every lexeme it's
+given — even a quoted one — so a term like `status=online` or `foo&bar` always gets split into
+two lexemes no matter how it's escaped. `dialect: 'tsquery'` avoids the parser entirely by
+casting straight to `tsquery` (`(:query)::tsquery` instead of `to_tsquery(:language, :query)`)
+— a raw cast takes each quoted lexeme completely literally, so whatever tokenized the `tsvector`
+in `fields` is the *only* thing that decides what a token is:
+
+```ts
+attributes: {
+  tags: {
+    type: 'fulltext',
+    dialect: 'tsquery',
+    fields: ["array_to_tsvector(regexp_split_to_array(tags, '\\s+'))"],
+  },
+}
+```
+
+```text
+tags:"status=online"   // array_to_tsvector(...) @@ ('''status=online''')::tsquery
+```
+
+`array_to_tsvector(regexp_split_to_array(...))` stores each array element as a literal lexeme
+with no parsing or normalization at all, so `status=online` survives as one token instead of
+being split on `=`. Since there's no config/dictionary involved, there's no `language` option
+for this dialect — it's simply ignored if set.
+
+An optional `tokenize: (value: string) => string[]` controls how a query term is split into
+lexemes before being matched — it should mirror whatever produced the tokens in `fields`.
+It defaults to splitting on whitespace, matching the `regexp_split_to_array(..., '\s+')` recipe
+above. Because it's a function rather than a regex, it can also normalize case in the same
+place, mirroring a transform applied on the SQL side (e.g. `lower(...)` before the split):
+
+```ts
+attributes: {
+  tags: {
+    type: 'fulltext',
+    dialect: 'tsquery',
+    fields: ["array_to_tsvector(regexp_split_to_array(lower(tags), '\\s+'))"],
+    tokenize: (value) => value.toLowerCase().split(/\s+/).filter(Boolean),
+  },
+}
+```
+
+**`array_to_tsvector` does not store lexeme positions**, so a multi-token term always joins with
+`&` (plain AND) by default — `phrases: true`, which joins with `<->` instead, silently never
+matches anything against a position-less vector like the one above (not an error — see
+[Unparseable values never error](#unparseable-values-never-error) for the general precedent).
+Positions — and so real phrase search — need a different `fields` recipe, building the
+`tsvector`'s own literal syntax (which accepts explicit positions) from a tokenized array:
+
+```sql
+CREATE FUNCTION literal_tsvector(input text, sep text DEFAULT '\s+') RETURNS tsvector AS $$
+  SELECT COALESCE(
+    string_agg(quote_literal(tok) || ':' || ord::text, ' ' ORDER BY ord),
+    ''
+  )::tsvector
+  FROM unnest(regexp_split_to_array(input, sep)) WITH ORDINALITY AS t(tok, ord)
+$$ LANGUAGE sql IMMUTABLE PARALLEL SAFE;
+```
+
+```ts
+attributes: {
+  tags: {
+    type: 'fulltext',
+    dialect: 'tsquery',
+    phrases: true,
+    fields: ["literal_tsvector(tags)"],
+  },
+}
+```
+
+This still needs no extension — `IMMUTABLE` SQL functions like this one are indexable
+(`CREATE INDEX ... USING gin (literal_tsvector(tags))`, same functional-index pattern as
+[Trigram indexes](#trigram-indexes-postgres)) — but it costs roughly 2x a plain
+`array_to_tsvector`/`to_tsvector` call per row, since a function with a `FROM`/aggregate in its
+body can't be inlined into the surrounding query the way a single-expression function can.
+Postgres also flatly rejects a bare subquery as an index expression, which is why this needs a
+wrapper function rather than an inline expression.
+
+#### `type: 'tag'` — `key:value` syntax against a literal fulltext attribute
+
+Typing `status:online` directly against a `tsquery`-dialect attribute doesn't do what it looks
+like it should — search-cop's own grammar parses `field<op>value` first, so `status:online` as
+a top-level query term means "attribute `status`, operator `:`, value `online`", not a literal
+string to match. Getting the literal string `status:online` matched requires writing it
+explicitly as a quoted value against the actual attribute, e.g. `tags:"status:online"`.
+
+A `tag` attribute makes the natural syntax work by rewriting the predicate before it's resolved:
+`status:online` compiles exactly as if the query had been `tags:"status:online"` against the
+`attribute` it points to (normally a `dialect: 'tsquery'` fulltext attribute, so the literal
+`:` survives):
+
+```ts
+attributes: {
+  status: { type: 'tag', attribute: 'tags' },
+  priority: { type: 'tag', attribute: 'tags' },
+  tags: {
+    type: 'fulltext',
+    dialect: 'tsquery',
+    fields: ["array_to_tsvector(regexp_split_to_array(tags, '\\s+'))"],
+  },
+}
+```
+
+```text
+status:online                    // tags @@ ('''status:online''')::tsquery
+status:online priority:high      // tags @@ ('''status:online'' & ''priority:high''')::tsquery   (fused)
+```
+
+Only `:` is supported (no `=`, no ordering operators), same as `fulltext`. Wildcards, negation,
+and escaping all work exactly as they do for any other bare-colon term — a trailing `*` (e.g.
+`status:on*`) makes the *whole* reconstructed token a prefix match, not just the part after the
+colon. Since the rewritten predicate is indistinguishable from an ordinary predicate against the
+target attribute, it goes through the exact same resolution and [fusion](#fusion) as any other
+fulltext term — several `tag` attributes pointing at the same target (like `status` and
+`priority` above) fuse into a single `@@` call when combined in a query, exactly like two
+predicates against the same named `fulltext` attribute already do.
+
+search-cop doesn't validate that `attribute` points at a `fulltext` attribute (or that its
+`dialect` is `'tsquery'`) — same "config is your responsibility" contract as [`fields` being raw
+SQL](#fields-are-raw-sql). Pointing it at a nonexistent attribute throws `UNKNOWN_ATTRIBUTE`
+(the rewritten predicate is validated exactly like any other), but pointing it at, say, a
+`dialect: 'to_tsquery'` attribute won't error — it'll just silently re-split the literal `:`
+via Postgres's own parser, the same as using that dialect directly.
+
+#### Fusion
+
+Several bare terms against the same `fulltext` attribute, combined at the same `AND`/`OR` level
+(including a single negated term), are fused into **one** `@@` call instead of one call per
+term — each term is rendered independently and then joined with `&`/`|`/`!`, never by
+concatenating raw values into a shared string. This keeps a free-text query from re-evaluating
+the `tsvector` expression (and re-scanning its index) once per word. Fusion only merges direct
+siblings under one `AND`/`OR`/single-term `NOT`; a `NOT` wrapping a whole group, or terms split
+across nested groups with other attributes mixed in, compile to separate `@@` calls instead
+(still correct, just not fused). Fusion itself has no Postgres-specific knowledge — the
+rendering it calls into (per-term quoting, `&`/`|`/`!` glue, `:*` for wildcards, and the outer
+`@@` shape) is looked up by `dialect`. MySQL (`MATCH ... AGAINST`) and SQLite (FTS5) full-text —
+which would need a different combined-query syntax and outer SQL shape for the same fused terms
+— are not implemented yet, but would slot into that same per-dialect lookup rather than
+changing how fusion decides what to combine. See [Out of scope](#out-of-scope-for-now).
+
 ### Unparseable values never error
 
 A value that doesn't fit its attribute's type — `id:foo` where `id` is a `uuid`,
@@ -542,16 +741,18 @@ Invalid queries throw a `SearchCopError` with a `code`:
   against an undeclared `_all` — see [Default field](#default-field))
 - `INVALID_OPERATOR` — the operator is not supported for the attribute's type (e.g. `status:>online` for an `enum`)
 - `INVALID_WILDCARD` — a bare `*` appears somewhere other than the start/end of a bare-colon `string` value (e.g. `name:Pet*Other`; see [Wildcards](#wildcards))
+- `CIRCULAR_TAG_REFERENCE` — a `tag` attribute's `attribute` points at itself (see [`type: 'tag'`](#type-tag--keyvalue-syntax-against-a-literal-fulltext-attribute))
 
 Note there's no error for a value that doesn't fit its type (an invalid uuid, an unknown
 enum value, ...) — see [Unparseable values never error](#unparseable-values-never-error).
 
 ## Out of scope (for now)
 
-Associations/joins, full-text search (ranking/relevance/stemming — bare terms against
-`_all` are exact/wildcard `LIKE` matches, not a relevance-ranked search), a `!=` operator
+Associations/joins, full-text search on MySQL (`MATCH ... AGAINST`) or SQLite (FTS5) — only
+[Postgres full-text](#full-text-search-postgres) is implemented so far — a `!=` operator
 (negate with [`NOT`](#query-syntax) instead), range syntax (`1..100`), query
-optimization/planning, pagination/sorting, raw SQL as the top-level query language (a
+optimization/planning beyond the [full-text fusion](#full-text-search-postgres) already
+described, pagination/sorting, raw SQL as the top-level query language (a
 [`fields` entry](#fields-are-raw-sql) is raw SQL, but the `query` string itself is always
 the DSL, never passed through), and additional database adapters are intentionally not
 implemented. The AST is designed so these can be added later.
@@ -560,8 +761,16 @@ implemented. The AST is designed so these can be added later.
 
 ```bash
 pnpm install
-pnpm test        # build the grammar and run the test suite
+pnpm test        # build the grammar and run the test suite (sqlite)
 pnpm run lint
 pnpm run typecheck
 pnpm run build
+```
+
+Postgres-specific tests (full-text search, and the general integration suite run against
+Postgres instead of sqlite) need a real database:
+
+```bash
+docker compose up -d
+DATABASE=postgres pnpm test
 ```

@@ -3,6 +3,7 @@ export type SearchCopErrorCode =
   | 'UNKNOWN_ATTRIBUTE'
   | 'INVALID_OPERATOR'
   | 'INVALID_WILDCARD'
+  | 'CIRCULAR_TAG_REFERENCE'
   ;
 
 export class SearchCopError extends Error {

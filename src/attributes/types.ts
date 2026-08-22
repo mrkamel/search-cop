@@ -1,7 +1,5 @@
-export type AttributeType = 'string' | 'number' | 'boolean' | 'date' | 'datetime' | 'enum' | 'uuid' | 'null';
-
+export type AttributeType = 'string' | 'number' | 'boolean' | 'date' | 'datetime' | 'enum' | 'uuid' | 'null' | 'fulltext' | 'tag';
 export type AttributeFieldType = { field: string } & AttributeDefinition;
-
 export type AttributeField = string | AttributeFieldType;
 
 interface BaseAttributeDefinition {
@@ -16,6 +14,14 @@ export interface StringAttributeDefinition extends BaseAttributeDefinition {
   wildcards?: boolean;
   leftWildcard?: boolean;
   rightWildcard?: boolean;
+}
+
+export interface FulltextAttributeDefinition extends BaseAttributeDefinition {
+  type: 'fulltext';
+  dialect: 'to_tsquery' | 'tsquery';
+  language?: string;
+  tokenize?: (value: string) => string[];
+  phrases?: boolean;
 }
 
 export interface UuidAttributeDefinition extends BaseAttributeDefinition {
@@ -49,6 +55,14 @@ export interface NullAttributeDefinition extends BaseAttributeDefinition {
   isNotNull: string[];
 }
 
+// Redirects a "field:value" predicate into a literal fulltext term against another attribute —
+// "status:online" with { type: 'tag', attribute: 'tags' } compiles exactly as if the query had
+// been "tags:\"status:online\"" against that (normally dialect: 'tsquery') fulltext attribute.
+export interface TagAttributeDefinition extends BaseAttributeDefinition {
+  type: 'tag';
+  attribute: string;
+}
+
 export type AttributeDefinition =
   | StringAttributeDefinition
   | NumberAttributeDefinition
@@ -57,7 +71,9 @@ export type AttributeDefinition =
   | DatetimeAttributeDefinition
   | EnumAttributeDefinition
   | UuidAttributeDefinition
-  | NullAttributeDefinition;
+  | NullAttributeDefinition
+  | FulltextAttributeDefinition
+  | TagAttributeDefinition;
 
 export type AttributeMap = Record<string, AttributeDefinition>;
 
@@ -65,6 +81,8 @@ export type AttributeValue<T extends AttributeDefinition> = T extends
   | StringAttributeDefinition
   | EnumAttributeDefinition
   | UuidAttributeDefinition
+  | FulltextAttributeDefinition
+  | TagAttributeDefinition
   ? string
   : T extends NumberAttributeDefinition
     ? number

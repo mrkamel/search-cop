@@ -4,6 +4,7 @@ import { validate } from '../../src/validator/validator.js';
 import { SearchCopError } from '../../src/errors/errors.js';
 import { tryCatch } from '../../src/utils/tryCatch.js';
 import type { AttributeMap } from '../../src/attributes/types.js';
+import type { ValidatedPredicate } from '../../src/validator/types.js';
 
 const attributes: AttributeMap = {
   status: { type: 'enum', values: ['online', 'offline', 'pending'] },
@@ -712,6 +713,231 @@ describe('validate: negation (NOT)', () => {
     expect(validateQuery('NOT NOT status:online')).toMatchObject({
       type: 'not',
       child: { type: 'not', child: { fields: [{ field: 'status', value: 'online' }] } },
+    });
+  });
+});
+
+describe('validate: "fulltext" attributes', () => {
+  const fulltextAttributes: AttributeMap = {
+    _all: { type: 'fulltext', dialect: 'to_tsquery', fields: ["to_tsvector('simple', name || ' ' || description)"] },
+  };
+
+  it('resolves a bare term to a fulltext field, defaulting the dialect to "to_tsquery" and the language to "simple"', () => {
+    expect(validate({ expression: parse('word1'), attributes: fulltextAttributes })).toMatchObject({
+      fields: [{ field: "to_tsvector('simple', name || ' ' || description)", fulltext: 'to_tsquery', term: 'word1', language: 'simple', phrases: true }],
+    });
+  });
+
+  it('uses an explicit "language" option instead of the default', () => {
+    const attributesWithLanguage: AttributeMap = {
+      _all: { type: 'fulltext', dialect: 'to_tsquery', language: 'english', fields: ['search_vector'] },
+    };
+
+    expect(validate({ expression: parse('word1'), attributes: attributesWithLanguage })).toMatchObject({
+      fields: [{ field: 'search_vector', language: 'english' }],
+    });
+  });
+
+  it('defaults "phrases" to false for the "tsquery" dialect, unlike "to_tsquery"', () => {
+    const literalAttributes: AttributeMap = {
+      _all: { type: 'fulltext', dialect: 'tsquery', fields: ["array_to_tsvector(regexp_split_to_array(name, '\\s+'))"] },
+    };
+
+    expect(validate({ expression: parse('word1'), attributes: literalAttributes })).toMatchObject({
+      fields: [{ fulltext: 'tsquery', phrases: false }],
+    });
+  });
+
+  it('lets "phrases" be overridden explicitly for either dialect', () => {
+    const attributesWithPhrases: AttributeMap = {
+      toTsquery: { type: 'fulltext', dialect: 'to_tsquery', phrases: false, fields: ["to_tsvector('simple', name)"] },
+      tsquery: { type: 'fulltext', dialect: 'tsquery', phrases: true, fields: ["array_to_tsvector(regexp_split_to_array(name, '\\s+'))"] },
+    };
+
+    expect(validate({ expression: parse('toTsquery:word1'), attributes: attributesWithPhrases })).toMatchObject({
+      fields: [{ fulltext: 'to_tsquery', phrases: false }],
+    });
+
+    expect(validate({ expression: parse('tsquery:word1'), attributes: attributesWithPhrases })).toMatchObject({
+      fields: [{ fulltext: 'tsquery', phrases: true }],
+    });
+  });
+
+  it('defaults "tokenize" to splitting on whitespace for the "tsquery" dialect', () => {
+    const literalAttributes: AttributeMap = {
+      _all: { type: 'fulltext', dialect: 'tsquery', fields: ["array_to_tsvector(regexp_split_to_array(name, '\\s+'))"] },
+    };
+
+    const { fields } = validate({ expression: parse('"foo  bar"'), attributes: literalAttributes }) as ValidatedPredicate;
+    const [field] = fields as { tokenize?: (value: string) => string[] }[];
+
+    expect(field?.tokenize?.('foo  bar')).toEqual(['foo', 'bar']);
+  });
+
+  it('uses a custom "tokenize" function when given one', () => {
+    const literalAttributes: AttributeMap = {
+      _all: {
+        type: 'fulltext',
+        dialect: 'tsquery',
+        fields: ["array_to_tsvector(regexp_split_to_array(name, ','))"],
+        tokenize: (value) => value.split(','),
+      },
+    };
+
+    const { fields } = validate({ expression: parse('"foo,bar"'), attributes: literalAttributes }) as ValidatedPredicate;
+    const [field] = fields as { tokenize?: (value: string) => string[] }[];
+
+    expect(field?.tokenize?.('foo,bar')).toEqual(['foo', 'bar']);
+  });
+
+  it('compiles to "alwaysFalse" when a custom "tokenize" reduces the term to zero tokens', () => {
+    const literalAttributes: AttributeMap = {
+      _all: {
+        type: 'fulltext',
+        dialect: 'tsquery',
+        fields: ["array_to_tsvector(regexp_split_to_array(name, '\\s+'))"],
+        tokenize: () => [],
+      },
+    };
+
+    expect(validate({ expression: parse('word1'), attributes: literalAttributes })).toMatchObject({
+      fields: [{ alwaysFalse: true }],
+    });
+  });
+
+  it('rejects an explicit "=" — only the bare colon form is supported', () => {
+    const [error] = tryCatch(() => validate({ expression: parse('_all:=word1'), attributes: fulltextAttributes }));
+
+    expect(error).toBeInstanceOf(SearchCopError);
+    expect((error as SearchCopError).code).toBe('INVALID_OPERATOR');
+  });
+
+  it('rejects ordering operators', () => {
+    for (const operator of ['>', '>=', '<', '<=']) {
+      const [error] = tryCatch(() => validate({ expression: parse(`_all:${operator}word1`), attributes: fulltextAttributes }));
+
+      expect(error).toBeInstanceOf(SearchCopError);
+      expect((error as SearchCopError).code).toBe('INVALID_OPERATOR');
+    }
+  });
+
+  it('resolves every "fields" entry independently for a multi-field fulltext attribute', () => {
+    const multiFieldFulltextAttributes: AttributeMap = {
+      _all: { type: 'fulltext', dialect: 'to_tsquery', fields: ['title_vector', 'body_vector'] },
+    };
+
+    expect(validate({ expression: parse('word1'), attributes: multiFieldFulltextAttributes })).toMatchObject({
+      fields: [
+        { field: 'title_vector', term: 'word1' },
+        { field: 'body_vector', term: 'word1' },
+      ],
+    });
+  });
+
+  it('does not set "wildcard" for a plain term', () => {
+    expect(validate({ expression: parse('word1'), attributes: fulltextAttributes })).toMatchObject({
+      fields: [{ term: 'word1', wildcard: false }],
+    });
+  });
+
+  it('strips a trailing "*" and sets "wildcard: true"', () => {
+    expect(validate({ expression: parse('word1*'), attributes: fulltextAttributes })).toMatchObject({
+      fields: [{ term: 'word1', wildcard: true }],
+    });
+  });
+
+  it('compiles a whitespace-only wildcarded term to "alwaysFalse" instead of an empty tsquery', () => {
+    expect(validate({ expression: parse('"   *"'), attributes: fulltextAttributes })).toMatchObject({
+      fields: [{ alwaysFalse: true }],
+    });
+  });
+
+  it('rejects a leading "*" — only a trailing wildcard is supported', () => {
+    const [error] = tryCatch(() => validate({ expression: parse('*word1'), attributes: fulltextAttributes }));
+
+    expect(error).toBeInstanceOf(SearchCopError);
+    expect((error as SearchCopError).code).toBe('INVALID_WILDCARD');
+  });
+
+  it('rejects a "*" in the middle of a value', () => {
+    const [error] = tryCatch(() => validate({ expression: parse('word1*word2'), attributes: fulltextAttributes }));
+
+    expect(error).toBeInstanceOf(SearchCopError);
+    expect((error as SearchCopError).code).toBe('INVALID_WILDCARD');
+  });
+
+  it('unescapes a trailing "\\*" to a literal "*", not a wildcard', () => {
+    expect(validate({ expression: parse('word1\\*'), attributes: fulltextAttributes })).toMatchObject({
+      fields: [{ term: 'word1*', wildcard: false }],
+    });
+  });
+});
+
+describe('validate: "tag" attributes', () => {
+  const tagAttributes: AttributeMap = {
+    status: { type: 'tag', attribute: 'tags' },
+    priority: { type: 'tag', attribute: 'tags' },
+    tags: { type: 'fulltext', dialect: 'tsquery', fields: ["array_to_tsvector(regexp_split_to_array(tags, '\\s+'))"] },
+  };
+
+  it('rewrites "field:value" into a literal fulltext term against the target attribute', () => {
+    expect(validate({ expression: parse('status:online'), attributes: tagAttributes })).toMatchObject({
+      fields: [{ field: "array_to_tsvector(regexp_split_to_array(tags, '\\s+'))", fulltext: 'tsquery', term: 'status:online' }],
+    });
+  });
+
+  it('resolves the target attribute\'s own options (dialect, tokenize, phrases)', () => {
+    const [field] = (validate({ expression: parse('status:online'), attributes: tagAttributes }) as ValidatedPredicate)
+      .fields as { tokenize?: (value: string) => string[] }[];
+
+    expect(field?.tokenize?.('status:online')).toEqual(['status:online']);
+  });
+
+  it('throws "UNKNOWN_ATTRIBUTE" when the target attribute is not declared', () => {
+    const brokenTagAttributes: AttributeMap = { status: { type: 'tag', attribute: 'nonexistent' } };
+    const [error] = tryCatch(() => validate({ expression: parse('status:online'), attributes: brokenTagAttributes }));
+
+    expect(error).toBeInstanceOf(SearchCopError);
+    expect((error as SearchCopError).code).toBe('UNKNOWN_ATTRIBUTE');
+  });
+
+  it('throws "CIRCULAR_TAG_REFERENCE" instead of recursing forever when a "tag" points at itself', () => {
+    const selfReferencingTagAttributes: AttributeMap = { status: { type: 'tag', attribute: 'status' } };
+    const [error] = tryCatch(() => validate({ expression: parse('status:online'), attributes: selfReferencingTagAttributes }));
+
+    expect(error).toBeInstanceOf(SearchCopError);
+    expect((error as SearchCopError).code).toBe('CIRCULAR_TAG_REFERENCE');
+  });
+
+  it('rejects an explicit "=" — only the bare colon form is supported, same as fulltext', () => {
+    const [error] = tryCatch(() => validate({ expression: parse('status:=online'), attributes: tagAttributes }));
+
+    expect(error).toBeInstanceOf(SearchCopError);
+    expect((error as SearchCopError).code).toBe('INVALID_OPERATOR');
+  });
+
+  it('rejects ordering operators', () => {
+    for (const operator of ['>', '>=', '<', '<=']) {
+      const [error] = tryCatch(() => validate({ expression: parse(`status:${operator}online`), attributes: tagAttributes }));
+
+      expect(error).toBeInstanceOf(SearchCopError);
+      expect((error as SearchCopError).code).toBe('INVALID_OPERATOR');
+    }
+  });
+
+  it('supports a trailing "*" wildcard on the reconstructed term', () => {
+    expect(validate({ expression: parse('status:online*'), attributes: tagAttributes })).toMatchObject({
+      fields: [{ term: 'status:online', wildcard: true }],
+    });
+  });
+
+  it('two different "tag" attributes both resolve against the same target field (fusion happens at compile time)', () => {
+    expect(validate({ expression: parse('status:online priority:high'), attributes: tagAttributes })).toMatchObject({
+      type: 'and',
+      children: [
+        { type: 'predicate', fields: [{ term: 'status:online' }] },
+        { type: 'predicate', fields: [{ term: 'priority:high' }] },
+      ],
     });
   });
 });
