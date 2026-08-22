@@ -45,9 +45,9 @@ export type {
   DateAttributeDefinition,
   DatetimeAttributeDefinition,
   EnumAttributeDefinition,
+  FulltextAttributeDefinition,
   NullAttributeDefinition,
   NumberAttributeDefinition,
-  PostgresFulltextAttributeDefinition,
   StringAttributeDefinition,
   UuidAttributeDefinition,
 } from './attributes/types.js';

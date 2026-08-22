@@ -1,4 +1,4 @@
-export type AttributeType = 'string' | 'number' | 'boolean' | 'date' | 'datetime' | 'enum' | 'uuid' | 'null' | 'postgres_fulltext';
+export type AttributeType = 'string' | 'number' | 'boolean' | 'date' | 'datetime' | 'enum' | 'uuid' | 'null' | 'fulltext';
 export type AttributeFieldType = { field: string } & AttributeDefinition;
 export type AttributeField = string | AttributeFieldType;
 
@@ -16,9 +16,12 @@ export interface StringAttributeDefinition extends BaseAttributeDefinition {
   rightWildcard?: boolean;
 }
 
-export interface PostgresFulltextAttributeDefinition extends BaseAttributeDefinition {
-  type: 'postgres_fulltext';
+export interface FulltextAttributeDefinition extends BaseAttributeDefinition {
+  type: 'fulltext';
+  dialect: 'to_tsquery' | 'tsquery';
   language?: string;
+  tokenize?: (value: string) => string[];
+  phrases?: boolean;
 }
 
 export interface UuidAttributeDefinition extends BaseAttributeDefinition {
@@ -61,7 +64,7 @@ export type AttributeDefinition =
   | EnumAttributeDefinition
   | UuidAttributeDefinition
   | NullAttributeDefinition
-  | PostgresFulltextAttributeDefinition;
+  | FulltextAttributeDefinition;
 
 export type AttributeMap = Record<string, AttributeDefinition>;
 
@@ -69,7 +72,7 @@ export type AttributeValue<T extends AttributeDefinition> = T extends
   | StringAttributeDefinition
   | EnumAttributeDefinition
   | UuidAttributeDefinition
-  | PostgresFulltextAttributeDefinition
+  | FulltextAttributeDefinition
   ? string
   : T extends NumberAttributeDefinition
     ? number

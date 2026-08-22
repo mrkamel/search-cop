@@ -9,20 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `postgres_fulltext` attribute type — compiles to `@@ to_tsquery(...)` against a `tsvector`
-  (a precomputed/indexed column, or a `to_tsvector(...)` call) supplied via `fields`, same
-  raw-SQL contract as any other attribute. An optional `language` (default `'simple'`) sets
-  the `regconfig` passed to `to_tsquery`. A trailing `*` on a term compiles to a prefix match
-  (`:*`) — the only wildcard shape `tsquery` supports; `*` anywhere else throws
+- `fulltext` attribute type — matches against a `tsvector` (a precomputed/indexed column, or a
+  SQL expression that builds one) supplied via `fields`, same raw-SQL contract as any other
+  attribute. A required `dialect` (no default — must always be set explicitly) picks one of two:
+  `'to_tsquery'` compiles to `@@ to_tsquery(...)`, handing each term to Postgres's own
+  text-search parser and dictionaries — an optional `language`
+  (default `'simple'`) sets the `regconfig` passed to it. `'tsquery'` compiles to
+  `@@ (:query)::tsquery` instead, casting straight to `tsquery` so every lexeme is taken
+  literally with no re-parsing or dictionary normalization — an optional
+  `tokenize: (value: string) => string[]` (default: split on whitespace) controls how a term
+  becomes lexemes, matching whatever tokenized the `tsvector` in `fields` (e.g.
+  `array_to_tsvector(regexp_split_to_array(...))`). A trailing `*` on a term compiles to a
+  prefix match (`:*`) — the only wildcard shape `tsquery` supports; `*` anywhere else throws
   `INVALID_WILDCARD`. Only the bare `:` operator is supported. Every term is bound as its own
   parameter and quoted as a `tsquery` lexeme before being combined with others, never
   concatenated into the query text raw. See
   [Full-text search (Postgres)](README.md#full-text-search-postgres).
-- Several bare terms against the same `postgres_fulltext` attribute, combined at the same
-  `AND`/`OR` level (including a single negated term), are fused into one `@@` call instead of
-  one call per term, avoiding re-evaluating the `tsvector` expression once per word. Fusion
-  only merges direct siblings; a `NOT` wrapping a whole group, or terms split across nested
-  groups with other attributes mixed in, still compile correctly, just without fusing. See
+- `phrases: boolean` option on `fulltext` attributes — controls whether a multi-token term
+  joins its lexemes with `<->` (phrase/adjacency, `true`) or `&` (plain AND, `false`). Defaults
+  to `true` for `dialect: 'to_tsquery'` and `false` for `dialect: 'tsquery'`, since
+  `array_to_tsvector`-built vectors carry no position data and so can never satisfy `<->`. See
+  [Full-text search (Postgres)](README.md#full-text-search-postgres).
+- Several bare terms against the same `fulltext` attribute, combined at the same `AND`/`OR`
+  level (including a single negated term), are fused into one `@@` call instead of one call
+  per term, avoiding re-evaluating the `tsvector` expression once per word. Fusion only merges
+  direct siblings; a `NOT` wrapping a whole group, or terms split across nested groups with
+  other attributes mixed in, still compile correctly, just without fusing. See
   [Full-text search (Postgres)](README.md#full-text-search-postgres).
 
 ## [0.2.0]

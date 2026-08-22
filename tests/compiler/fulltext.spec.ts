@@ -1,15 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { fuseFulltext } from '../../src/compiler/fulltext.js';
+import { combineFulltextTerms, fuseFulltext } from '../../src/compiler/fulltext.js';
 import type { ValidatedExpression, ValidatedField, ValidatedNot, ValidatedPredicate } from '../../src/validator/types.js';
 
+const DEFAULT_TOKENIZE = (value: string): string[] => value.split(/\s+/).filter((word) => word.length > 0);
+
 function fulltextField(
-  { field, term, wildcard = false, language = 'simple' }: { field: string, term: string, wildcard?: boolean, language?: string },
+  { field, term, wildcard = false, phrases = true, language = 'simple' }:
+  { field: string, term: string, wildcard?: boolean, phrases?: boolean, language?: string },
 ): ValidatedField {
-  return { field, fulltext: 'postgres_fulltext', term, wildcard, language };
+  return { field, fulltext: 'to_tsquery', term, wildcard, phrases, language };
 }
 
 function fusedField({ field, combinedQuery, language = 'simple' }: { field: string, combinedQuery: string, language?: string }): ValidatedField {
-  return { field, fulltext: 'postgres_fulltext', combinedQuery, language };
+  return { field, fulltext: 'to_tsquery', combinedQuery, language };
 }
 
 function predicate(...fields: ValidatedField[]): ValidatedPredicate {
@@ -198,5 +201,130 @@ describe('fuseFulltext: recursion into nested groups', () => {
     );
 
     expect(fuseFulltext(expression)).toEqual(not(and(predicate(fusedField({ field: '_all', combinedQuery: `'word1' & 'word2'` })))));
+  });
+});
+
+describe('combineFulltextTerms: "to_tsquery" dialect', () => {
+  it('joins a multi-word wildcarded value with "<->" by default (phrases: true)', () => {
+    const query = combineFulltextTerms({
+      engine: 'to_tsquery',
+      combinator: 'and',
+      phrases: true,
+      terms: [{ value: 'foo bar', wildcard: true, negated: false }],
+    });
+
+    expect(query).toBe(`'foo' <-> 'bar':*`);
+  });
+
+  it('joins with "&" instead when "phrases: false"', () => {
+    const query = combineFulltextTerms({
+      engine: 'to_tsquery',
+      combinator: 'and',
+      phrases: false,
+      terms: [{ value: 'foo bar', wildcard: true, negated: false }],
+    });
+
+    expect(query).toBe(`'foo' & 'bar':*`);
+  });
+});
+
+describe('combineFulltextTerms: "tsquery" dialect', () => {
+  it('quotes a single-token term as one literal lexeme', () => {
+    const query = combineFulltextTerms({
+      engine: 'tsquery',
+      combinator: 'and',
+      phrases: false,
+      tokenize: DEFAULT_TOKENIZE,
+      terms: [{ value: 'foo:bar', wildcard: false, negated: false }],
+    });
+
+    expect(query).toBe(`'foo:bar'`);
+  });
+
+  it('tokenizes a multi-word term and joins with "&" by default, not "<->"', () => {
+    const query = combineFulltextTerms({
+      engine: 'tsquery',
+      combinator: 'and',
+      phrases: false,
+      tokenize: DEFAULT_TOKENIZE,
+      terms: [{ value: 'foo bar', wildcard: false, negated: false }],
+    });
+
+    expect(query).toBe(`'foo' & 'bar'`);
+  });
+
+  it('joins with "<->" instead when "phrases: true"', () => {
+    const query = combineFulltextTerms({
+      engine: 'tsquery',
+      combinator: 'and',
+      phrases: true,
+      tokenize: DEFAULT_TOKENIZE,
+      terms: [{ value: 'foo bar', wildcard: false, negated: false }],
+    });
+
+    expect(query).toBe(`'foo' <-> 'bar'`);
+  });
+
+  it('appends ":*" only to the last token of a wildcarded multi-word term', () => {
+    const query = combineFulltextTerms({
+      engine: 'tsquery',
+      combinator: 'and',
+      phrases: false,
+      tokenize: DEFAULT_TOKENIZE,
+      terms: [{ value: 'foo bar', wildcard: true, negated: false }],
+    });
+
+    expect(query).toBe(`'foo' & 'bar':*`);
+  });
+
+  it('prefixes a negated term with "!"', () => {
+    const query = combineFulltextTerms({
+      engine: 'tsquery',
+      combinator: 'and',
+      phrases: false,
+      tokenize: DEFAULT_TOKENIZE,
+      terms: [{ value: 'foo', wildcard: false, negated: true }],
+    });
+
+    expect(query).toBe(`!'foo'`);
+  });
+
+  it('fuses several sibling terms with "&"/"|", independent of the per-term join', () => {
+    const andQuery = combineFulltextTerms({
+      engine: 'tsquery',
+      combinator: 'and',
+      phrases: false,
+      tokenize: DEFAULT_TOKENIZE,
+      terms: [
+        { value: 'foo', wildcard: false, negated: false },
+        { value: 'bar', wildcard: false, negated: true },
+      ],
+    });
+
+    const orQuery = combineFulltextTerms({
+      engine: 'tsquery',
+      combinator: 'or',
+      phrases: false,
+      tokenize: DEFAULT_TOKENIZE,
+      terms: [
+        { value: 'foo', wildcard: false, negated: false },
+        { value: 'bar', wildcard: false, negated: false },
+      ],
+    });
+
+    expect(andQuery).toBe(`'foo' & !'bar'`);
+    expect(orQuery).toBe(`'foo' | 'bar'`);
+  });
+
+  it('uses a custom "tokenize" function instead of splitting on whitespace', () => {
+    const query = combineFulltextTerms({
+      engine: 'tsquery',
+      combinator: 'and',
+      phrases: false,
+      tokenize: (value) => value.split(','),
+      terms: [{ value: 'foo,bar', wildcard: false, negated: false }],
+    });
+
+    expect(query).toBe(`'foo' & 'bar'`);
   });
 });

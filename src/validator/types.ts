@@ -5,14 +5,20 @@ export const LIKE_ESCAPE_CHARACTER = '!';
 
 export type ValidatedValue = string | number | boolean | Date;
 export type ValidatedOperator = Exclude<Operator, ':'> | 'LIKE';
-export type FulltextEngine = 'postgres_fulltext';
+export type FulltextEngine = 'to_tsquery' | 'tsquery';
 
 export type ValidatedField =
   | { alwaysFalse: true }
   | { field: string, value: ValidatedValue, operator: ValidatedOperator, caseSensitive: boolean | 'lower' | 'upper' }
   | { field: string, operator: 'IS NULL' | 'IS NOT NULL' }
-  | { field: string, fulltext: FulltextEngine, term: string, wildcard: boolean, language: string }
-  | { field: string, fulltext: FulltextEngine, combinedQuery: string, language: string }
+  | {
+    field: string, fulltext: FulltextEngine, term: string, wildcard: boolean, phrases: boolean,
+    language: string, tokenize?: (value: string) => string[],
+  }
+  | {
+    field: string, fulltext: FulltextEngine, combinedQuery: string,
+    language: string,
+  }
   ;
 
 export type ValidatedPredicate = {

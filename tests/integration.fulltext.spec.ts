@@ -7,26 +7,29 @@ import type { AttributeMap } from '../src/attributes/types.js';
 
 const attributes: AttributeMap = {
   _all: {
-    type: 'postgres_fulltext',
+    type: 'fulltext',
+    dialect: 'to_tsquery',
     fields: ["to_tsvector('simple', title || ' ' || body)"],
   },
 };
 
 const namedFieldAttributes: AttributeMap = {
-  title: { type: 'postgres_fulltext', fields: ["to_tsvector('simple', title)"] },
-  body: { type: 'postgres_fulltext', fields: ["to_tsvector('simple', body)"] },
+  title: { type: 'fulltext', dialect: 'to_tsquery', fields: ["to_tsvector('simple', title)"] },
+  body: { type: 'fulltext', dialect: 'to_tsquery', fields: ["to_tsvector('simple', body)"] },
 };
 
 const multiFieldAttributes: AttributeMap = {
   _all: {
-    type: 'postgres_fulltext',
+    type: 'fulltext',
+    dialect: 'to_tsquery',
     fields: ["to_tsvector('simple', title)", "to_tsvector('simple', body)"],
   },
 };
 
 const englishAttributes: AttributeMap = {
   _all: {
-    type: 'postgres_fulltext',
+    type: 'fulltext',
+    dialect: 'to_tsquery',
     language: 'english',
     fields: ["to_tsvector('english', title || ' ' || body)"],
   },
@@ -248,9 +251,9 @@ describe.skipIf(process.env.DATABASE !== 'postgres')('search: postgres fulltext 
 
   describe('special characters in a search term', () => {
     it('matches a term containing a literal single quote, without erroring', async () => {
-      const match = await createArticle({ title: "Joe's place", body: 'other' });
+      const match = await createArticle({ title: "Name's article", body: 'other' });
 
-      const articles = await search({ repository: ArticleRepository, query: `"Joe's"`, attributes }).getMany();
+      const articles = await search({ repository: ArticleRepository, query: `"Name's"`, attributes }).getMany();
 
       expect(articles.map((article) => article.id)).toEqual([match.id]);
     });
@@ -264,6 +267,120 @@ describe.skipIf(process.env.DATABASE !== 'postgres')('search: postgres fulltext 
       expect(articles.map((article) => article.id)).toEqual([]);
       expect(articles.map((article) => article.id)).not.toContain(match.id);
       expect(articles.map((article) => article.id)).not.toContain(decoy.id);
+    });
+  });
+
+  describe('dialect: "tsquery" (literal, tokenizer-controlled matching)', () => {
+    const literalAttributes: AttributeMap = {
+      _all: {
+        type: 'fulltext',
+        dialect: 'tsquery',
+        fields: ["array_to_tsvector(regexp_split_to_array(title || ' ' || body, '\\s+'))"],
+      },
+    };
+
+    it('matches a single term', async () => {
+      const match = await createArticle({ title: 'Name', body: 'Description' });
+
+      await createArticle({ title: 'other', body: 'unknown' });
+
+      const articles = await search({ repository: ArticleRepository, query: 'Name', attributes: literalAttributes }).getMany();
+
+      expect(articles.map((article) => article.id)).toEqual([match.id]);
+    });
+
+    it('fuses multiple bare AND-ed terms into a single combined match', async () => {
+      const match = await createArticle({ title: 'Name Description', body: 'other' });
+
+      await createArticle({ title: 'Name', body: 'other' });
+      await createArticle({ title: 'Description', body: 'other' });
+
+      const articles = await search({ repository: ArticleRepository, query: 'Name Description', attributes: literalAttributes }).getMany();
+
+      expect(articles.map((article) => article.id)).toEqual([match.id]);
+    });
+
+    it('fuses a negated bare term, excluding rows that contain it', async () => {
+      const match = await createArticle({ title: 'Name', body: 'other' });
+
+      await createArticle({ title: 'Name Description', body: 'other' });
+
+      const articles = await search({ repository: ArticleRepository, query: 'Name -Description', attributes: literalAttributes }).getMany();
+
+      expect(articles.map((article) => article.id)).toEqual([match.id]);
+    });
+
+    it('matches a trailing-"*" prefix term against a word it starts with', async () => {
+      const match = await createArticle({ title: 'Description', body: 'other' });
+
+      await createArticle({ title: 'other', body: 'unknown' });
+
+      const articles = await search({ repository: ArticleRepository, query: 'Desc*', attributes: literalAttributes }).getMany();
+
+      expect(articles.map((article) => article.id)).toEqual([match.id]);
+    });
+
+    it('matches a term containing a literal single quote or "&", without erroring', async () => {
+      const match = await createArticle({ title: "Name's & Co", body: 'other' });
+
+      const quoteHits = await search({ repository: ArticleRepository, query: `"Name's"`, attributes: literalAttributes }).getMany();
+      const ampersandHits = await search({ repository: ArticleRepository, query: '"&"', attributes: literalAttributes }).getMany();
+
+      expect(quoteHits.map((article) => article.id)).toEqual([match.id]);
+      expect(ampersandHits.map((article) => article.id)).toEqual([match.id]);
+    });
+
+    // The motivating scenario: a token containing ":" or "&" survives as one literal lexeme
+    // end-to-end, unlike "to_tsquery"/"to_tsvector" which would split it into two words.
+    it('matches a token containing ":" or "&" as a single literal lexeme, not two words', async () => {
+      const colonMatch = await createArticle({ title: 'status:online', body: 'other' });
+      const ampersandMatch = await createArticle({ title: 'foo&bar', body: 'other' });
+
+      const decoy = await createArticle({ title: 'status online foo bar', body: 'other' });
+
+      const colonHits = await search({ repository: ArticleRepository, query: '"status:online"', attributes: literalAttributes }).getMany();
+      const ampersandHits = await search({ repository: ArticleRepository, query: '"foo&bar"', attributes: literalAttributes }).getMany();
+
+      expect(colonHits.map((article) => article.id)).toEqual([colonMatch.id]);
+      expect(colonHits.map((article) => article.id)).not.toContain(decoy.id);
+      expect(ampersandHits.map((article) => article.id)).toEqual([ampersandMatch.id]);
+      expect(ampersandHits.map((article) => article.id)).not.toContain(decoy.id);
+    });
+
+    it('never matches a multi-token term with "phrases: true" against a position-less vector', async () => {
+      const phraseAttributes: AttributeMap = {
+        _all: {
+          type: 'fulltext',
+          dialect: 'tsquery',
+          phrases: true,
+          fields: ["array_to_tsvector(regexp_split_to_array(title || ' ' || body, '\\s+'))"],
+        },
+      };
+
+      await createArticle({ title: 'Name Description', body: 'other' });
+
+      const articles = await search({ repository: ArticleRepository, query: '"Name Description"', attributes: phraseAttributes }).getMany();
+
+      expect(articles.map((article) => article.id)).toEqual([]);
+    });
+
+    it('uses a custom "tokenize" function to control what counts as a token', async () => {
+      const commaAttributes: AttributeMap = {
+        _all: {
+          type: 'fulltext',
+          dialect: 'tsquery',
+          fields: ["array_to_tsvector(regexp_split_to_array(title, ','))"],
+          tokenize: (value) => value.split(','),
+        },
+      };
+
+      const match = await createArticle({ title: 'foo,bar', body: 'other' });
+
+      await createArticle({ title: 'foo bar', body: 'other' });
+
+      const articles = await search({ repository: ArticleRepository, query: '"foo,bar"', attributes: commaAttributes }).getMany();
+
+      expect(articles.map((article) => article.id)).toEqual([match.id]);
     });
   });
 });

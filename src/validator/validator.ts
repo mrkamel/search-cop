@@ -5,11 +5,11 @@ import type {
   AttributeField,
   AttributeMap,
   AttributeType,
+  FulltextAttributeDefinition,
   NullAttributeDefinition,
-  PostgresFulltextAttributeDefinition,
 } from '../attributes/types.js';
 import { LIKE_ESCAPE_CHARACTER } from './types.js';
-import type { ValidatedExpression, ValidatedField, ValidatedOperator, ValidatedPredicate, ValidatedValue } from './types.js';
+import type { FulltextEngine, ValidatedExpression, ValidatedField, ValidatedOperator, ValidatedPredicate, ValidatedValue } from './types.js';
 import { SearchCopError } from '../errors/errors.js';
 import { DEFAULT_FIELD } from '../parser/parser.js';
 
@@ -22,8 +22,10 @@ const OPERATORS_BY_TYPE: Record<AttributeType, Operator[]> = {
   enum: [':', '='],
   uuid: [':', '='],
   null: [':', '='],
-  postgres_fulltext: [':'],
+  fulltext: [':'],
 };
+
+const DEFAULT_TOKENIZE = (value: string): string[] => value.split(/\s+/).filter((word) => word.length > 0);
 
 function isEqualityOperator(operator: Operator): boolean {
   return operator === ':' || operator === '=';
@@ -134,16 +136,31 @@ function resolveValue(
 ):
   | { value: ValidatedValue, operator: ValidatedOperator, caseSensitive: boolean | 'lower' | 'upper' }
   | { operator: 'IS NULL' | 'IS NOT NULL' }
-  | { fulltext: 'postgres_fulltext', term: string, wildcard: boolean, language: string }
+  | {
+    fulltext: FulltextEngine, term: string, wildcard: boolean, phrases: boolean,
+    language: string, tokenize?: (value: string) => string[],
+  }
   | null {
   const { value: rawValue, operator } = predicate;
 
-  if (definition.type === 'postgres_fulltext') {
+  if (definition.type === 'fulltext') {
     const { term, wildcard } = resolveFulltextTerm({ value: rawValue, predicate });
 
     if (term === '') return null;
 
-    return { fulltext: 'postgres_fulltext', term, wildcard, language: definition.language ?? 'simple' };
+    const { dialect } = definition;
+    const tokenize = dialect === 'tsquery' ? definition.tokenize ?? DEFAULT_TOKENIZE : undefined;
+
+    if (tokenize && tokenize(term).length === 0) return null;
+
+    return {
+      fulltext: dialect,
+      term,
+      wildcard,
+      phrases: definition.phrases ?? dialect === 'to_tsquery',
+      language: definition.language ?? 'simple',
+      tokenize,
+    };
   }
 
   const caseSensitive = definition.type === 'string' ? definition.caseSensitive ?? true : true;
@@ -239,7 +256,7 @@ function resolveNull(
 
 function convertValue(
   { value, definition }:
-  { value: string, definition: Exclude<AttributeDefinition, NullAttributeDefinition | PostgresFulltextAttributeDefinition> },
+  { value: string, definition: Exclude<AttributeDefinition, NullAttributeDefinition | FulltextAttributeDefinition> },
 ): ValidatedValue | null {
   switch (definition.type) {
     case 'string':

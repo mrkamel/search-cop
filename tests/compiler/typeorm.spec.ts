@@ -71,7 +71,9 @@ function compileQuery({ query, attributeMap = attributes, alias }: { query: stri
 function getSqlAndParams(queryBuilder: { getQuery(): string, getParameters(): Record<string, unknown> }): [string, unknown[]] {
   const parameters = queryBuilder.getParameters();
   const params: unknown[] = [];
-  const sql = queryBuilder.getQuery().replace(/:([A-Za-z_][A-Za-z0-9_]*)/g, (_match, name: string) => {
+  // Negative lookbehind excludes Postgres's "::" cast operator (e.g. "(:param)::tsquery"),
+  // which would otherwise be misread as a second placeholder named "tsquery".
+  const sql = queryBuilder.getQuery().replace(/(?<!:):([A-Za-z_][A-Za-z0-9_]*)/g, (_match, name: string) => {
     params.push(parameters[name]);
 
     return '?';
@@ -431,9 +433,9 @@ describe('compile: negation (NOT)', () => {
   });
 });
 
-describe('compile: "postgres_fulltext" attributes', () => {
+describe('compile: "fulltext" attributes', () => {
   const fulltextAttributes: AttributeMap = {
-    _all: { type: 'postgres_fulltext', fields: ["to_tsvector('simple', name || ' ' || description)"] },
+    _all: { type: 'fulltext', dialect: 'to_tsquery', fields: ["to_tsvector('simple', name || ' ' || description)"] },
     status: { type: 'enum', values: ['online', 'offline', 'pending'] },
   };
 
@@ -445,7 +447,9 @@ describe('compile: "postgres_fulltext" attributes', () => {
   });
 
   it('uses an explicit "language" option instead of the default', () => {
-    const attributesWithLanguage: AttributeMap = { _all: { type: 'postgres_fulltext', language: 'english', fields: ['search_vector'] } };
+    const attributesWithLanguage: AttributeMap = {
+      _all: { type: 'fulltext', dialect: 'to_tsquery', language: 'english', fields: ['search_vector'] },
+    };
     const [sql, params] = getSqlAndParams(compileQuery({ query: 'word1', attributeMap: attributesWithLanguage }));
 
     expect(sql).toContain(`search_vector @@ to_tsquery(?, ?)`);
@@ -508,8 +512,8 @@ describe('compile: "postgres_fulltext" attributes', () => {
 
   describe('fusion across explicitly-named fulltext attributes (not just "_all")', () => {
     const twoFulltextAttributes: AttributeMap = {
-      title: { type: 'postgres_fulltext', fields: ['title_vector'] },
-      body: { type: 'postgres_fulltext', fields: ['body_vector'] },
+      title: { type: 'fulltext', dialect: 'to_tsquery', fields: ['title_vector'] },
+      body: { type: 'fulltext', dialect: 'to_tsquery', fields: ['body_vector'] },
     };
 
     it('fuses two predicates against the same named fulltext attribute into a single @@ call', () => {
@@ -527,6 +531,63 @@ describe('compile: "postgres_fulltext" attributes', () => {
       expect(sql).toMatch(/title_vector @@ to_tsquery\(\?, \?\).*AND.*body_vector @@ to_tsquery\(\?, \?\)/);
       expect(params).toEqual(['simple', `'word1'`, 'simple', `'word2'`]);
     });
+  });
+});
+
+describe('compile: "fulltext" attributes with dialect "tsquery"', () => {
+  const literalFulltextAttributes: AttributeMap = {
+    _all: { type: 'fulltext', dialect: 'tsquery', fields: ["array_to_tsvector(regexp_split_to_array(name, '\\s+'))"] },
+  };
+
+  it('compiles to "@@ (:param)::tsquery", with no language parameter bound', () => {
+    const [sql, params] = getSqlAndParams(compileQuery({ query: 'word1', attributeMap: literalFulltextAttributes }));
+
+    expect(sql).toContain(`array_to_tsvector(regexp_split_to_array(name, '\\s+')) @@ (?)::tsquery`);
+    expect(params).toEqual([`'word1'`]);
+  });
+
+  it('joins a tokenized multi-word term with "&", not "<->"', () => {
+    const [, params] = getSqlAndParams(compileQuery({ query: '"foo bar"', attributeMap: literalFulltextAttributes }));
+
+    expect(params).toEqual([`'foo' & 'bar'`]);
+  });
+
+  it('joins with "<->" instead when "phrases: true" is set', () => {
+    const phraseAttributes: AttributeMap = {
+      _all: { type: 'fulltext', dialect: 'tsquery', phrases: true, fields: ["array_to_tsvector(regexp_split_to_array(name, '\\s+'))"] },
+    };
+
+    const [, params] = getSqlAndParams(compileQuery({ query: '"foo bar"', attributeMap: phraseAttributes }));
+
+    expect(params).toEqual([`'foo' <-> 'bar'`]);
+  });
+
+  it('appends ":*" only to the last token of a wildcarded multi-word term', () => {
+    const [, params] = getSqlAndParams(compileQuery({ query: '"foo bar*"', attributeMap: literalFulltextAttributes }));
+
+    expect(params).toEqual([`'foo' & 'bar':*`]);
+  });
+
+  it('fuses multiple bare AND-ed terms into a single @@ call with one combined parameter', () => {
+    const [sql, params] = getSqlAndParams(compileQuery({ query: 'word1 word2', attributeMap: literalFulltextAttributes }));
+
+    expect(sql.match(/@@/g)).toHaveLength(1);
+    expect(params).toEqual([`'word1' & 'word2'`]);
+  });
+
+  it('uses a custom "tokenize" function instead of the default whitespace split', () => {
+    const commaTokenizedAttributes: AttributeMap = {
+      _all: {
+        type: 'fulltext',
+        dialect: 'tsquery',
+        fields: ["array_to_tsvector(regexp_split_to_array(name, ','))"],
+        tokenize: (value) => value.split(','),
+      },
+    };
+
+    const [, params] = getSqlAndParams(compileQuery({ query: '"foo,bar"', attributeMap: commaTokenizedAttributes }));
+
+    expect(params).toEqual([`'foo' & 'bar'`]);
   });
 });
 

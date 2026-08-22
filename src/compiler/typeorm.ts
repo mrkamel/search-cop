@@ -22,7 +22,6 @@ function nextParameterName(): string {
 
 function buildFulltextCondition(field: FulltextValidatedField): Rendered {
   const parameterName = nextParameterName();
-  const languageParameterName = nextParameterName();
 
   const query = 'combinedQuery' in field
     ? field.combinedQuery
@@ -30,11 +29,21 @@ function buildFulltextCondition(field: FulltextValidatedField): Rendered {
       engine: field.fulltext,
       combinator: 'and',
       terms: [{ value: field.term, wildcard: field.wildcard, negated: false }],
+      phrases: field.phrases,
+      tokenize: field.tokenize,
     });
+
+  const parameters: ObjectLiteral = { [parameterName]: query };
+
+  // A raw ::tsquery cast (the "tsquery" dialect) takes no config argument, so there's
+  // nothing to bind for it — only "to_tsquery" needs a language parameter.
+  const languageParameterName = field.fulltext === 'to_tsquery' ? nextParameterName() : undefined;
+
+  if (languageParameterName) parameters[languageParameterName] = field.language;
 
   return {
     sql: renderFulltextCondition({ engine: field.fulltext, field: field.field, parameterName, languageParameterName }),
-    parameters: { [parameterName]: query, [languageParameterName]: field.language },
+    parameters,
   };
 }
 

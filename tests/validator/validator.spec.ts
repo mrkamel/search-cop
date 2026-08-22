@@ -4,6 +4,7 @@ import { validate } from '../../src/validator/validator.js';
 import { SearchCopError } from '../../src/errors/errors.js';
 import { tryCatch } from '../../src/utils/tryCatch.js';
 import type { AttributeMap } from '../../src/attributes/types.js';
+import type { ValidatedPredicate } from '../../src/validator/types.js';
 
 const attributes: AttributeMap = {
   status: { type: 'enum', values: ['online', 'offline', 'pending'] },
@@ -716,24 +717,91 @@ describe('validate: negation (NOT)', () => {
   });
 });
 
-describe('validate: "postgres_fulltext" attributes', () => {
+describe('validate: "fulltext" attributes', () => {
   const fulltextAttributes: AttributeMap = {
-    _all: { type: 'postgres_fulltext', fields: ["to_tsvector('simple', name || ' ' || description)"] },
+    _all: { type: 'fulltext', dialect: 'to_tsquery', fields: ["to_tsvector('simple', name || ' ' || description)"] },
   };
 
-  it('resolves a bare term to a fulltext field, defaulting the language to "simple"', () => {
+  it('resolves a bare term to a fulltext field, defaulting the dialect to "to_tsquery" and the language to "simple"', () => {
     expect(validate({ expression: parse('word1'), attributes: fulltextAttributes })).toMatchObject({
-      fields: [{ field: "to_tsvector('simple', name || ' ' || description)", fulltext: 'postgres_fulltext', term: 'word1', language: 'simple' }],
+      fields: [{ field: "to_tsvector('simple', name || ' ' || description)", fulltext: 'to_tsquery', term: 'word1', language: 'simple', phrases: true }],
     });
   });
 
   it('uses an explicit "language" option instead of the default', () => {
     const attributesWithLanguage: AttributeMap = {
-      _all: { type: 'postgres_fulltext', language: 'english', fields: ['search_vector'] },
+      _all: { type: 'fulltext', dialect: 'to_tsquery', language: 'english', fields: ['search_vector'] },
     };
 
     expect(validate({ expression: parse('word1'), attributes: attributesWithLanguage })).toMatchObject({
       fields: [{ field: 'search_vector', language: 'english' }],
+    });
+  });
+
+  it('defaults "phrases" to false for the "tsquery" dialect, unlike "to_tsquery"', () => {
+    const literalAttributes: AttributeMap = {
+      _all: { type: 'fulltext', dialect: 'tsquery', fields: ["array_to_tsvector(regexp_split_to_array(name, '\\s+'))"] },
+    };
+
+    expect(validate({ expression: parse('word1'), attributes: literalAttributes })).toMatchObject({
+      fields: [{ fulltext: 'tsquery', phrases: false }],
+    });
+  });
+
+  it('lets "phrases" be overridden explicitly for either dialect', () => {
+    const attributesWithPhrases: AttributeMap = {
+      toTsquery: { type: 'fulltext', dialect: 'to_tsquery', phrases: false, fields: ["to_tsvector('simple', name)"] },
+      tsquery: { type: 'fulltext', dialect: 'tsquery', phrases: true, fields: ["array_to_tsvector(regexp_split_to_array(name, '\\s+'))"] },
+    };
+
+    expect(validate({ expression: parse('toTsquery:word1'), attributes: attributesWithPhrases })).toMatchObject({
+      fields: [{ fulltext: 'to_tsquery', phrases: false }],
+    });
+
+    expect(validate({ expression: parse('tsquery:word1'), attributes: attributesWithPhrases })).toMatchObject({
+      fields: [{ fulltext: 'tsquery', phrases: true }],
+    });
+  });
+
+  it('defaults "tokenize" to splitting on whitespace for the "tsquery" dialect', () => {
+    const literalAttributes: AttributeMap = {
+      _all: { type: 'fulltext', dialect: 'tsquery', fields: ["array_to_tsvector(regexp_split_to_array(name, '\\s+'))"] },
+    };
+
+    const { fields } = validate({ expression: parse('"foo  bar"'), attributes: literalAttributes }) as ValidatedPredicate;
+    const [field] = fields as { tokenize?: (value: string) => string[] }[];
+
+    expect(field?.tokenize?.('foo  bar')).toEqual(['foo', 'bar']);
+  });
+
+  it('uses a custom "tokenize" function when given one', () => {
+    const literalAttributes: AttributeMap = {
+      _all: {
+        type: 'fulltext',
+        dialect: 'tsquery',
+        fields: ["array_to_tsvector(regexp_split_to_array(name, ','))"],
+        tokenize: (value) => value.split(','),
+      },
+    };
+
+    const { fields } = validate({ expression: parse('"foo,bar"'), attributes: literalAttributes }) as ValidatedPredicate;
+    const [field] = fields as { tokenize?: (value: string) => string[] }[];
+
+    expect(field?.tokenize?.('foo,bar')).toEqual(['foo', 'bar']);
+  });
+
+  it('compiles to "alwaysFalse" when a custom "tokenize" reduces the term to zero tokens', () => {
+    const literalAttributes: AttributeMap = {
+      _all: {
+        type: 'fulltext',
+        dialect: 'tsquery',
+        fields: ["array_to_tsvector(regexp_split_to_array(name, '\\s+'))"],
+        tokenize: () => [],
+      },
+    };
+
+    expect(validate({ expression: parse('word1'), attributes: literalAttributes })).toMatchObject({
+      fields: [{ alwaysFalse: true }],
     });
   });
 
@@ -755,7 +823,7 @@ describe('validate: "postgres_fulltext" attributes', () => {
 
   it('resolves every "fields" entry independently for a multi-field fulltext attribute', () => {
     const multiFieldFulltextAttributes: AttributeMap = {
-      _all: { type: 'postgres_fulltext', fields: ['title_vector', 'body_vector'] },
+      _all: { type: 'fulltext', dialect: 'to_tsquery', fields: ['title_vector', 'body_vector'] },
     };
 
     expect(validate({ expression: parse('word1'), attributes: multiFieldFulltextAttributes })).toMatchObject({
