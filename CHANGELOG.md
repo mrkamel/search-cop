@@ -9,11 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `postgres_fulltext` attribute type — compiles to `@@ websearch_to_tsquery(...)` against a
-  `tsvector` (a precomputed/indexed column, or a `to_tsvector(...)` call) supplied via
-  `fields`, same raw-SQL contract as any other attribute. An optional `language` (default
-  `'simple'`) sets the `regconfig` passed to `websearch_to_tsquery`. Only the bare `:`
-  operator is supported. See [Full-text search (Postgres)](README.md#full-text-search-postgres).
+- `postgres_fulltext` attribute type — compiles to `@@ to_tsquery(...)` against a `tsvector`
+  (a precomputed/indexed column, or a `to_tsvector(...)` call) supplied via `fields`, same
+  raw-SQL contract as any other attribute. An optional `language` (default `'simple'`) sets
+  the `regconfig` passed to `to_tsquery`. A trailing `*` on a term compiles to a prefix match
+  (`:*`) — the only wildcard shape `tsquery` supports; `*` anywhere else throws
+  `INVALID_WILDCARD`. Only the bare `:` operator is supported. Every term is bound as its own
+  parameter and quoted as a `tsquery` lexeme before being combined with others, never
+  concatenated into the query text raw. See
+  [Full-text search (Postgres)](README.md#full-text-search-postgres).
 - Several bare terms against the same `postgres_fulltext` attribute, combined at the same
   `AND`/`OR` level (including a single negated term), are fused into one `@@` call instead of
   one call per term, avoiding re-evaluating the `tsvector` expression once per word. Fusion

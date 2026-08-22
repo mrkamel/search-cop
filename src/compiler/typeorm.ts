@@ -1,14 +1,16 @@
 import { Brackets, type ObjectLiteral, type Repository, type SelectQueryBuilder, type WhereExpressionBuilder } from 'typeorm';
 import { LIKE_ESCAPE_CHARACTER } from '../validator/types.js';
 import type { ValidatedExpression, ValidatedField, ValidatedPredicate } from '../validator/types.js';
-import { fuseFulltext } from './fulltext.js';
+import { combineFulltextTerms, fuseFulltext, renderFulltextCondition } from './fulltext.js';
 
 type Combinator = 'and' | 'or';
 
-interface Rendered {
+type Rendered = {
   sql: string;
   parameters: ObjectLiteral;
-}
+};
+
+type FulltextValidatedField = Extract<ValidatedField, { fulltext: unknown }>;
 
 let parameterCounter = 0;
 
@@ -18,12 +20,21 @@ function nextParameterName(): string {
   return `search_cop_${parameterCounter}`;
 }
 
-function buildFulltextCondition(field: { field: string, fulltext: 'postgres_fulltext', term: string, language: string }): Rendered {
+function buildFulltextCondition(field: FulltextValidatedField): Rendered {
   const parameterName = nextParameterName();
+  const languageParameterName = nextParameterName();
+
+  const query = 'combinedQuery' in field
+    ? field.combinedQuery
+    : combineFulltextTerms({
+      engine: field.fulltext,
+      combinator: 'and',
+      terms: [{ value: field.term, wildcard: field.wildcard, negated: false }],
+    });
 
   return {
-    sql: `${field.field} @@ websearch_to_tsquery('${field.language}', :${parameterName})`,
-    parameters: { [parameterName]: field.term },
+    sql: renderFulltextCondition({ engine: field.fulltext, field: field.field, parameterName, languageParameterName }),
+    parameters: { [parameterName]: query, [languageParameterName]: field.language },
   };
 }
 

@@ -765,4 +765,36 @@ describe('validate: "postgres_fulltext" attributes', () => {
       ],
     });
   });
+
+  it('does not set "wildcard" for a plain term', () => {
+    expect(validate({ expression: parse('word1'), attributes: fulltextAttributes })).toMatchObject({
+      fields: [{ term: 'word1', wildcard: false }],
+    });
+  });
+
+  it('strips a trailing "*" and sets "wildcard: true"', () => {
+    expect(validate({ expression: parse('word1*'), attributes: fulltextAttributes })).toMatchObject({
+      fields: [{ term: 'word1', wildcard: true }],
+    });
+  });
+
+  it('rejects a leading "*" — only a trailing wildcard is supported', () => {
+    const [error] = tryCatch(() => validate({ expression: parse('*word1'), attributes: fulltextAttributes }));
+
+    expect(error).toBeInstanceOf(SearchCopError);
+    expect((error as SearchCopError).code).toBe('INVALID_WILDCARD');
+  });
+
+  it('rejects a "*" in the middle of a value', () => {
+    const [error] = tryCatch(() => validate({ expression: parse('word1*word2'), attributes: fulltextAttributes }));
+
+    expect(error).toBeInstanceOf(SearchCopError);
+    expect((error as SearchCopError).code).toBe('INVALID_WILDCARD');
+  });
+
+  it('unescapes a trailing "\\*" to a literal "*", not a wildcard', () => {
+    expect(validate({ expression: parse('word1\\*'), attributes: fulltextAttributes })).toMatchObject({
+      fields: [{ term: 'word1*', wildcard: false }],
+    });
+  });
 });

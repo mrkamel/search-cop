@@ -1,7 +1,5 @@
 export type AttributeType = 'string' | 'number' | 'boolean' | 'date' | 'datetime' | 'enum' | 'uuid' | 'null' | 'postgres_fulltext';
-
 export type AttributeFieldType = { field: string } & AttributeDefinition;
-
 export type AttributeField = string | AttributeFieldType;
 
 interface BaseAttributeDefinition {

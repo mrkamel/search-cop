@@ -215,4 +215,55 @@ describe.skipIf(process.env.DATABASE !== 'postgres')('search: postgres fulltext 
     expect(englishHits.map((article) => article.id)).toEqual([match.id]);
     expect(simpleHits.map((article) => article.id)).toEqual([]);
   });
+
+  describe('wildcards', () => {
+    it('matches a trailing-"*" prefix term against a word it starts with', async () => {
+      const match = await createArticle({ title: 'Description', body: 'other' });
+
+      await createArticle({ title: 'other', body: 'unknown' });
+
+      const articles = await search({ repository: ArticleRepository, query: 'Desc*', attributes }).getMany();
+
+      expect(articles.map((article) => article.id)).toEqual([match.id]);
+    });
+
+    it('does not match a word it is not a prefix of', async () => {
+      await createArticle({ title: 'Description', body: 'other' });
+
+      const articles = await search({ repository: ArticleRepository, query: 'scription*', attributes }).getMany();
+
+      expect(articles.map((article) => article.id)).toEqual([]);
+    });
+
+    it('fuses a wildcard term together with a plain term', async () => {
+      const match = await createArticle({ title: 'Name Description', body: 'other' });
+
+      await createArticle({ title: 'Name', body: 'other' });
+
+      const articles = await search({ repository: ArticleRepository, query: 'Name Desc*', attributes }).getMany();
+
+      expect(articles.map((article) => article.id)).toEqual([match.id]);
+    });
+  });
+
+  describe('special characters in a search term', () => {
+    it('matches a term containing a literal single quote, without erroring', async () => {
+      const match = await createArticle({ title: "Joe's place", body: 'other' });
+
+      const articles = await search({ repository: ArticleRepository, query: `"Joe's"`, attributes }).getMany();
+
+      expect(articles.map((article) => article.id)).toEqual([match.id]);
+    });
+
+    it('does not let a term containing "&" corrupt a fused query', async () => {
+      const match = await createArticle({ title: 'Name', body: 'other' });
+      const decoy = await createArticle({ title: 'Description', body: 'other' });
+
+      const articles = await search({ repository: ArticleRepository, query: `Name "foo & bar"`, attributes }).getMany();
+
+      expect(articles.map((article) => article.id)).toEqual([]);
+      expect(articles.map((article) => article.id)).not.toContain(match.id);
+      expect(articles.map((article) => article.id)).not.toContain(decoy.id);
+    });
+  });
 });

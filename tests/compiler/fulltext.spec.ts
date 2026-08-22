@@ -2,8 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { fuseFulltext } from '../../src/compiler/fulltext.js';
 import type { ValidatedExpression, ValidatedField, ValidatedNot, ValidatedPredicate } from '../../src/validator/types.js';
 
-function fulltextField({ field, term, language = 'simple' }: { field: string, term: string, language?: string }): ValidatedField {
-  return { field, fulltext: 'postgres_fulltext', term, language };
+function fulltextField(
+  { field, term, wildcard = false, language = 'simple' }: { field: string, term: string, wildcard?: boolean, language?: string },
+): ValidatedField {
+  return { field, fulltext: 'postgres_fulltext', term, wildcard, language };
+}
+
+function fusedField({ field, combinedQuery, language = 'simple' }: { field: string, combinedQuery: string, language?: string }): ValidatedField {
+  return { field, fulltext: 'postgres_fulltext', combinedQuery, language };
 }
 
 function predicate(...fields: ValidatedField[]): ValidatedPredicate {
@@ -37,31 +43,31 @@ describe('fuseFulltext: single leaves', () => {
 });
 
 describe('fuseFulltext: sibling fusion', () => {
-  it('fuses two AND-level sibling terms into one predicate, space-joined', () => {
+  it('fuses two AND-level sibling terms into one predicate, "&"-joined', () => {
     const expression = and(
       predicate(fulltextField({ field: '_all', term: 'word1' })),
       predicate(fulltextField({ field: '_all', term: 'word2' })),
     );
 
-    expect(fuseFulltext(expression)).toEqual(and(predicate(fulltextField({ field: '_all', term: 'word1 word2' }))));
+    expect(fuseFulltext(expression)).toEqual(and(predicate(fusedField({ field: '_all', combinedQuery: `'word1' & 'word2'` }))));
   });
 
-  it('fuses OR-level sibling terms, joined with the literal "OR"', () => {
+  it('fuses OR-level sibling terms, joined with "|"', () => {
     const expression = or(
       predicate(fulltextField({ field: '_all', term: 'word1' })),
       predicate(fulltextField({ field: '_all', term: 'word2' })),
     );
 
-    expect(fuseFulltext(expression)).toEqual(or(predicate(fulltextField({ field: '_all', term: 'word1 OR word2' }))));
+    expect(fuseFulltext(expression)).toEqual(or(predicate(fusedField({ field: '_all', combinedQuery: `'word1' | 'word2'` }))));
   });
 
-  it('fuses a NOT-wrapped single leaf into a "-"-prefixed term', () => {
+  it('fuses a NOT-wrapped single leaf into a "!"-prefixed term', () => {
     const expression = and(
       predicate(fulltextField({ field: '_all', term: 'word1' })),
       not(predicate(fulltextField({ field: '_all', term: 'word2' }))),
     );
 
-    expect(fuseFulltext(expression)).toEqual(and(predicate(fulltextField({ field: '_all', term: 'word1 -word2' }))));
+    expect(fuseFulltext(expression)).toEqual(and(predicate(fusedField({ field: '_all', combinedQuery: `'word1' & !'word2'` }))));
   });
 
   it('fuses three or more siblings in their original order', () => {
@@ -71,25 +77,43 @@ describe('fuseFulltext: sibling fusion', () => {
       not(predicate(fulltextField({ field: '_all', term: 'word3' }))),
     );
 
-    expect(fuseFulltext(expression)).toEqual(and(predicate(fulltextField({ field: '_all', term: 'word1 word2 -word3' }))));
+    expect(fuseFulltext(expression)).toEqual(and(predicate(fusedField({ field: '_all', combinedQuery: `'word1' & 'word2' & !'word3'` }))));
   });
 
-  it('quotes a multi-word term so it is treated as a phrase when fused', () => {
+  it('appends ":*" only to a wildcarded term when fusing with a plain one', () => {
+    const expression = and(
+      predicate(fulltextField({ field: '_all', term: 'word1', wildcard: true })),
+      predicate(fulltextField({ field: '_all', term: 'word2' })),
+    );
+
+    expect(fuseFulltext(expression)).toEqual(and(predicate(fusedField({ field: '_all', combinedQuery: `'word1':* & 'word2'` }))));
+  });
+
+  it('appends ":*" to a NOT-wrapped wildcarded single leaf, after the "!"', () => {
+    const expression = and(
+      predicate(fulltextField({ field: '_all', term: 'word1' })),
+      not(predicate(fulltextField({ field: '_all', term: 'word2', wildcard: true }))),
+    );
+
+    expect(fuseFulltext(expression)).toEqual(and(predicate(fusedField({ field: '_all', combinedQuery: `'word1' & !'word2':*` }))));
+  });
+
+  it('quotes a multi-word term as a single lexeme (Postgres tokenizes it into a phrase on its own)', () => {
     const expression = and(
       predicate(fulltextField({ field: '_all', term: 'red shoes' })),
       predicate(fulltextField({ field: '_all', term: 'word2' })),
     );
 
-    expect(fuseFulltext(expression)).toEqual(and(predicate(fulltextField({ field: '_all', term: '"red shoes" word2' }))));
+    expect(fuseFulltext(expression)).toEqual(and(predicate(fusedField({ field: '_all', combinedQuery: `'red shoes' & 'word2'` }))));
   });
 
-  it('strips embedded double quotes from a term before quoting it', () => {
+  it('doubles an embedded single quote in a term before quoting it', () => {
     const expression = and(
-      predicate(fulltextField({ field: '_all', term: 'foo "bar" baz' })),
+      predicate(fulltextField({ field: '_all', term: "foo 'bar' baz" })),
       predicate(fulltextField({ field: '_all', term: 'word2' })),
     );
 
-    expect(fuseFulltext(expression)).toEqual(and(predicate(fulltextField({ field: '_all', term: '"foo bar baz" word2' }))));
+    expect(fuseFulltext(expression)).toEqual(and(predicate(fusedField({ field: '_all', combinedQuery: `'foo ''bar'' baz' & 'word2'` }))));
   });
 
   it('fuses per field position across multi-field fulltext siblings', () => {
@@ -99,7 +123,10 @@ describe('fuseFulltext: sibling fusion', () => {
     );
 
     expect(fuseFulltext(expression)).toEqual(
-      and(predicate(fulltextField({ field: 'vec1', term: 'word1 word2' }), fulltextField({ field: 'vec2', term: 'worda wordb' }))),
+      and(predicate(
+        fusedField({ field: 'vec1', combinedQuery: `'word1' & 'word2'` }),
+        fusedField({ field: 'vec2', combinedQuery: `'worda' & 'wordb'` }),
+      )),
     );
   });
 });
@@ -146,7 +173,7 @@ describe('fuseFulltext: fusion boundaries', () => {
     expect(fuseFulltext(expression)).toEqual(
       and(
         predicate(fulltextField({ field: '_all', term: 'word1' })),
-        not(or(predicate(fulltextField({ field: '_all', term: 'word2 OR word3' })))),
+        not(or(predicate(fusedField({ field: '_all', combinedQuery: `'word2' | 'word3'` })))),
       ),
     );
   });
@@ -161,7 +188,7 @@ describe('fuseFulltext: recursion into nested groups', () => {
     );
 
     expect(fuseFulltext(expression)).toEqual(
-      and(or(predicate(fulltextField({ field: '_all', term: 'word1 OR word2' }))), predicate(statusField)),
+      and(or(predicate(fusedField({ field: '_all', combinedQuery: `'word1' | 'word2'` }))), predicate(statusField)),
     );
   });
 
@@ -170,6 +197,6 @@ describe('fuseFulltext: recursion into nested groups', () => {
       and(predicate(fulltextField({ field: '_all', term: 'word1' })), predicate(fulltextField({ field: '_all', term: 'word2' }))),
     );
 
-    expect(fuseFulltext(expression)).toEqual(not(and(predicate(fulltextField({ field: '_all', term: 'word1 word2' })))));
+    expect(fuseFulltext(expression)).toEqual(not(and(predicate(fusedField({ field: '_all', combinedQuery: `'word1' & 'word2'` })))));
   });
 });

@@ -134,12 +134,16 @@ function resolveValue(
 ):
   | { value: ValidatedValue, operator: ValidatedOperator, caseSensitive: boolean | 'lower' | 'upper' }
   | { operator: 'IS NULL' | 'IS NOT NULL' }
-  | { fulltext: 'postgres_fulltext', term: string, language: string }
+  | { fulltext: 'postgres_fulltext', term: string, wildcard: boolean, language: string }
   | null {
   const { value: rawValue, operator } = predicate;
 
   if (definition.type === 'postgres_fulltext') {
-    return { fulltext: 'postgres_fulltext', term: rawValue, language: definition.language ?? 'simple' };
+    const { term, wildcard } = resolveFulltextTerm({ value: rawValue, predicate });
+
+    if (term === '') return null;
+
+    return { fulltext: 'postgres_fulltext', term, wildcard, language: definition.language ?? 'simple' };
   }
 
   const caseSensitive = definition.type === 'string' ? definition.caseSensitive ?? true : true;
@@ -168,6 +172,30 @@ function resolveValue(
   const value = convertValue({ value: rawValue, definition });
 
   return value === null ? null : { value, operator: operator === ':' ? '=' : operator, caseSensitive };
+}
+
+function resolveFulltextTerm({ value, predicate }: { value: string, predicate: PredicateExpression }): { term: string, wildcard: boolean } {
+  let wildcard = false;
+
+  const term = value.replace(/\\.|\*/g, (match, offset: number, fullString: string) => {
+    if (match === '*') {
+      if (offset !== fullString.length - 1) {
+        throw new SearchCopError(
+          'INVALID_WILDCARD',
+          `"*" is only valid at the end of a value for a fulltext attribute, got "${value}" for attribute "${predicate.field}".`,
+          predicate.position,
+        );
+      }
+
+      wildcard = true;
+
+      return '';
+    }
+
+    return match.replace(/^\\/, '');
+  });
+
+  return { term, wildcard };
 }
 
 // "*" -> "%", "\*" -> a literal "*", everything else untouched. A bare "*" not at the

@@ -208,62 +208,62 @@ describe('compile: "wildcards" option (implicit contains matching)', () => {
 
 describe('compile: case sensitivity', () => {
   it('leaves the column bare for a case-sensitive attribute', () => {
-    const [sql] = getSqlAndParams(compileQuery({ query: 'name:Fred' }));
+    const [sql] = getSqlAndParams(compileQuery({ query: 'name:Value' }));
 
     expect(sql).toContain(`name LIKE ? ESCAPE '!'`);
     expect(sql).not.toContain('LOWER');
   });
 
   it('wraps the column in LOWER() for a case-insensitive attribute, and lowercases the bound value', () => {
-    const [sql, params] = getSqlAndParams(compileQuery({ query: 'name:Fred', attributeMap: caseInsensitiveAttributes }));
+    const [sql, params] = getSqlAndParams(compileQuery({ query: 'name:Value', attributeMap: caseInsensitiveAttributes }));
 
     expect(sql).toContain(`LOWER(name) LIKE ? ESCAPE '!'`);
-    expect(params).toEqual(['fred']);
+    expect(params).toEqual(['value']);
   });
 
   it('wraps the column in LOWER() for a case-insensitive wildcard too', () => {
-    const [sql, params] = getSqlAndParams(compileQuery({ query: 'name:Fred*', attributeMap: caseInsensitiveAttributes }));
+    const [sql, params] = getSqlAndParams(compileQuery({ query: 'name:Value*', attributeMap: caseInsensitiveAttributes }));
 
     expect(sql).toContain(`LOWER(name) LIKE ? ESCAPE '!'`);
-    expect(params).toEqual(['fred%']);
+    expect(params).toEqual(['value%']);
   });
 
   it('wraps the column in UPPER() for "caseSensitive: \'upper\'", and uppercases the bound value', () => {
     const upperCaseAttributes: AttributeMap = { name: { type: 'string', caseSensitive: 'upper' } };
-    const [sql, params] = getSqlAndParams(compileQuery({ query: 'name:Fred', attributeMap: upperCaseAttributes }));
+    const [sql, params] = getSqlAndParams(compileQuery({ query: 'name:Value', attributeMap: upperCaseAttributes }));
 
     expect(sql).toContain(`UPPER(name) LIKE ? ESCAPE '!'`);
-    expect(params).toEqual(['FRED']);
+    expect(params).toEqual(['VALUE']);
   });
 
   it('applies a field-level override\'s own "caseSensitive", independent of the outer attribute\'s', () => {
     const mixedCaseAttributes: AttributeMap = {
       search: { type: 'string', fields: ['name', { field: 'description', type: 'string', caseSensitive: false }] },
     };
-    const [sql, params] = getSqlAndParams(compileQuery({ query: 'search:Fred', attributeMap: mixedCaseAttributes }));
+    const [sql, params] = getSqlAndParams(compileQuery({ query: 'search:Value', attributeMap: mixedCaseAttributes }));
 
     expect(sql).toContain(`(name LIKE ? ESCAPE '!' OR LOWER(description) LIKE ? ESCAPE '!')`);
-    expect(params).toEqual(['Fred', 'fred']);
+    expect(params).toEqual(['Value', 'value']);
   });
 });
 
 describe('compile: multi-field attributes', () => {
   it('ORs together each field for a bare-colon value', () => {
-    const [sql, params] = getSqlAndParams(compileQuery({ query: 'search:Fred', attributeMap: multiFieldAttributes }));
+    const [sql, params] = getSqlAndParams(compileQuery({ query: 'search:Value', attributeMap: multiFieldAttributes }));
 
     expect(sql).toContain(`(name LIKE ? ESCAPE '!' OR description LIKE ? ESCAPE '!')`);
-    expect(params).toEqual(['Fred', 'Fred']);
+    expect(params).toEqual(['Value', 'Value']);
   });
 
   it('ORs together each field for a wildcard match', () => {
-    const [sql, params] = getSqlAndParams(compileQuery({ query: 'search:Fred*', attributeMap: multiFieldAttributes }));
+    const [sql, params] = getSqlAndParams(compileQuery({ query: 'search:Value*', attributeMap: multiFieldAttributes }));
 
     expect(sql).toContain(`(name LIKE ? ESCAPE '!' OR description LIKE ? ESCAPE '!')`);
-    expect(params).toEqual(['Fred%', 'Fred%']);
+    expect(params).toEqual(['Value%', 'Value%']);
   });
 
   it('uses a unique parameter for every field', () => {
-    const parameters = compileQuery({ query: 'search:Fred', attributeMap: multiFieldAttributes }).getParameters();
+    const parameters = compileQuery({ query: 'search:Value', attributeMap: multiFieldAttributes }).getParameters();
 
     expect(new Set(Object.keys(parameters)).size).toBe(2);
   });
@@ -277,17 +277,17 @@ describe('compile: multi-field attributes', () => {
   });
 
   it('inserts a "raw" field verbatim, unescaped and unqualified, leaving other fields bare', () => {
-    const [sql, params] = getSqlAndParams(compileQuery({ query: 'search:Fred', attributeMap: rawFieldAttributes }));
+    const [sql, params] = getSqlAndParams(compileQuery({ query: 'search:Value', attributeMap: rawFieldAttributes }));
 
     expect(sql).toContain(`(name LIKE ? ESCAPE '!' OR CAST(price AS TEXT) LIKE ? ESCAPE '!')`);
-    expect(params).toEqual(['Fred', 'Fred']);
+    expect(params).toEqual(['Value', 'Value']);
   });
 
   it('applies a "raw" field under a wildcard match too', () => {
-    const [sql, params] = getSqlAndParams(compileQuery({ query: 'search:Fred*', attributeMap: rawFieldAttributes }));
+    const [sql, params] = getSqlAndParams(compileQuery({ query: 'search:Value*', attributeMap: rawFieldAttributes }));
 
     expect(sql).toContain(`CAST(price AS TEXT) LIKE ? ESCAPE '!'`);
-    expect(params).toEqual(['Fred%', 'Fred%']);
+    expect(params).toEqual(['Value%', 'Value%']);
   });
 });
 
@@ -301,10 +301,10 @@ describe('compile: field-level type overrides', () => {
   });
 
   it('compiles a non-matching overridden field to an unconditional "1 = 0", not an error', () => {
-    const [sql, params] = getSqlAndParams(compileQuery({ query: 'search:Fred', attributeMap: typedFieldAttributes }));
+    const [sql, params] = getSqlAndParams(compileQuery({ query: 'search:Value', attributeMap: typedFieldAttributes }));
 
     expect(sql).toContain(`(name LIKE ? ESCAPE '!' OR 1 = 0)`);
-    expect(params).toEqual(['Fred']);
+    expect(params).toEqual(['Value']);
   });
 });
 
@@ -352,10 +352,10 @@ describe('compile: "null" attributes', () => {
 
 describe('compile: default field ("_all")', () => {
   it('compiles a bare query against "_all", OR-ing its configured fields', () => {
-    const [sql, params] = getSqlAndParams(compileQuery({ query: 'Fred', attributeMap: defaultFieldAttributes }));
+    const [sql, params] = getSqlAndParams(compileQuery({ query: 'Value', attributeMap: defaultFieldAttributes }));
 
     expect(sql).toContain(`(name LIKE ? ESCAPE '!' OR description LIKE ? ESCAPE '!')`);
-    expect(params).toEqual(['Fred', 'Fred']);
+    expect(params).toEqual(['Value', 'Value']);
   });
 
   it('ANDs multiple bare terms together (free-text search)', () => {
@@ -417,10 +417,10 @@ describe('compile: negation (NOT)', () => {
   });
 
   it('negates a multi-field OR group as a whole, not each field independently', () => {
-    const [sql, params] = getSqlAndParams(compileQuery({ query: 'NOT search:Fred', attributeMap: multiFieldAttributes }));
+    const [sql, params] = getSqlAndParams(compileQuery({ query: 'NOT search:Value', attributeMap: multiFieldAttributes }));
 
     expect(sql).toContain(`NOT(COALESCE(((name LIKE ? ESCAPE '!' OR description LIKE ? ESCAPE '!')), FALSE))`);
-    expect(params).toEqual(['Fred', 'Fred']);
+    expect(params).toEqual(['Value', 'Value']);
   });
 
   it('negating an unparseable ("1 = 0") predicate compiles to an unconditional true', () => {
@@ -437,54 +437,62 @@ describe('compile: "postgres_fulltext" attributes', () => {
     status: { type: 'enum', values: ['online', 'offline', 'pending'] },
   };
 
-  it('compiles a single term to "@@ websearch_to_tsquery(...)", defaulting the language to "simple"', () => {
+  it('compiles a single term to "@@ to_tsquery(...)", defaulting the language to "simple", bound as a parameter', () => {
     const [sql, params] = getSqlAndParams(compileQuery({ query: 'word1', attributeMap: fulltextAttributes }));
 
-    expect(sql).toContain(`to_tsvector('simple', name || ' ' || description) @@ websearch_to_tsquery('simple', ?)`);
-    expect(params).toEqual(['word1']);
+    expect(sql).toContain(`to_tsvector('simple', name || ' ' || description) @@ to_tsquery(?, ?)`);
+    expect(params).toEqual(['simple', `'word1'`]);
   });
 
   it('uses an explicit "language" option instead of the default', () => {
     const attributesWithLanguage: AttributeMap = { _all: { type: 'postgres_fulltext', language: 'english', fields: ['search_vector'] } };
-    const [sql] = getSqlAndParams(compileQuery({ query: 'word1', attributeMap: attributesWithLanguage }));
+    const [sql, params] = getSqlAndParams(compileQuery({ query: 'word1', attributeMap: attributesWithLanguage }));
 
-    expect(sql).toContain(`search_vector @@ websearch_to_tsquery('english', ?)`);
+    expect(sql).toContain(`search_vector @@ to_tsquery(?, ?)`);
+    expect(params).toEqual(['english', `'word1'`]);
+  });
+
+  it('appends ":*" for a trailing-"*" wildcard term', () => {
+    const [sql, params] = getSqlAndParams(compileQuery({ query: 'word1*', attributeMap: fulltextAttributes }));
+
+    expect(sql).toContain(`@@ to_tsquery(?, ?)`);
+    expect(params).toEqual(['simple', `'word1':*`]);
   });
 
   it('fuses multiple bare AND-ed terms into a single @@ call with one combined parameter', () => {
     const [sql, params] = getSqlAndParams(compileQuery({ query: 'word1 word2', attributeMap: fulltextAttributes }));
 
     expect(sql.match(/@@/g)).toHaveLength(1);
-    expect(params).toEqual(['word1 word2']);
+    expect(params).toEqual(['simple', `'word1' & 'word2'`]);
   });
 
-  it('fuses a negated bare term into a "-"-prefixed term in the same combined parameter', () => {
+  it('fuses a negated bare term into a "!"-prefixed term in the same combined parameter', () => {
     const [sql, params] = getSqlAndParams(compileQuery({ query: 'word1 -word2', attributeMap: fulltextAttributes }));
 
     expect(sql.match(/@@/g)).toHaveLength(1);
-    expect(params).toEqual(['word1 -word2']);
+    expect(params).toEqual(['simple', `'word1' & !'word2'`]);
   });
 
-  it('fuses OR-combined bare terms with the literal "OR"', () => {
+  it('fuses OR-combined bare terms with "|"', () => {
     const [sql, params] = getSqlAndParams(compileQuery({ query: 'word1 OR word2', attributeMap: fulltextAttributes }));
 
     expect(sql.match(/@@/g)).toHaveLength(1);
-    expect(params).toEqual(['word1 OR word2']);
+    expect(params).toEqual(['simple', `'word1' | 'word2'`]);
   });
 
   it('combines a fused fulltext term with an unrelated predicate via AND, without fusing across them', () => {
     const [sql, params] = getSqlAndParams(compileQuery({ query: 'word1 word2 status:online', attributeMap: fulltextAttributes }));
 
     expect(sql.match(/@@/g)).toHaveLength(1);
-    expect(sql).toMatch(/@@ websearch_to_tsquery\('simple', \?\).*AND.*status = \?/);
-    expect(params).toEqual(['word1 word2', 'online']);
+    expect(sql).toMatch(/@@ to_tsquery\(\?, \?\).*AND.*status = \?/);
+    expect(params).toEqual(['simple', `'word1' & 'word2'`, 'online']);
   });
 
   it('still fuses fulltext siblings that are not textually adjacent, on either side of a non-fulltext predicate', () => {
     const [sql, params] = getSqlAndParams(compileQuery({ query: 'word1 status:online word2', attributeMap: fulltextAttributes }));
 
     expect(sql.match(/@@/g)).toHaveLength(1);
-    expect(params).toEqual(['word1 word2', 'online']);
+    expect(params).toEqual(['simple', `'word1' & 'word2'`, 'online']);
   });
 
   it('fuses fulltext siblings within one OR group, alongside a separate non-fulltext OR group', () => {
@@ -494,8 +502,8 @@ describe('compile: "postgres_fulltext" attributes', () => {
     }));
 
     expect(sql.match(/@@/g)).toHaveLength(1);
-    expect(sql).toMatch(/@@ websearch_to_tsquery\('simple', \?\).*OR.*status = \?.*OR.*status = \?/);
-    expect(params).toEqual(['word1 word2', 'online', 'pending']);
+    expect(sql).toMatch(/@@ to_tsquery\(\?, \?\).*OR.*status = \?.*OR.*status = \?/);
+    expect(params).toEqual(['simple', `'word1' & 'word2'`, 'online', 'pending']);
   });
 
   describe('fusion across explicitly-named fulltext attributes (not just "_all")', () => {
@@ -508,16 +516,16 @@ describe('compile: "postgres_fulltext" attributes', () => {
       const [sql, params] = getSqlAndParams(compileQuery({ query: 'title:word1 title:word2', attributeMap: twoFulltextAttributes }));
 
       expect(sql.match(/@@/g)).toHaveLength(1);
-      expect(sql).toContain(`title_vector @@ websearch_to_tsquery('simple', ?)`);
-      expect(params).toEqual(['word1 word2']);
+      expect(sql).toContain(`title_vector @@ to_tsquery(?, ?)`);
+      expect(params).toEqual(['simple', `'word1' & 'word2'`]);
     });
 
     it('does not fuse predicates against two different fulltext attributes', () => {
       const [sql, params] = getSqlAndParams(compileQuery({ query: 'title:word1 body:word2', attributeMap: twoFulltextAttributes }));
 
       expect(sql.match(/@@/g)).toHaveLength(2);
-      expect(sql).toMatch(/title_vector @@ websearch_to_tsquery\('simple', \?\).*AND.*body_vector @@ websearch_to_tsquery\('simple', \?\)/);
-      expect(params).toEqual(['word1', 'word2']);
+      expect(sql).toMatch(/title_vector @@ to_tsquery\(\?, \?\).*AND.*body_vector @@ to_tsquery\(\?, \?\)/);
+      expect(params).toEqual(['simple', `'word1'`, 'simple', `'word2'`]);
     });
   });
 });

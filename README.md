@@ -521,9 +521,9 @@ createdAt:>=2026-01-01T10:00:00+02:00       // 2026-01-01T08:00:00.000Z
 
 ### Full-text search (Postgres)
 
-A `postgres_fulltext` attribute compiles to `@@ websearch_to_tsquery(...)`. `fields` must
-already evaluate to a `tsvector` — either a precomputed/indexed column, or a `to_tsvector(...)`
-call — search-cop never wraps or casts it for you, same as any other [raw `fields`
+A `postgres_fulltext` attribute compiles to `@@ to_tsquery(...)`. `fields` must already
+evaluate to a `tsvector` — either a precomputed/indexed column, or a `to_tsvector(...)` call —
+search-cop never wraps or casts it for you, same as any other [raw `fields`
 entry](#fields-are-raw-sql):
 
 ```ts
@@ -536,28 +536,46 @@ attributes: {
 ```
 
 ```text
-pizza                 // to_tsvector(...) @@ websearch_to_tsquery('simple', 'pizza')
-pizza pasta           // ...@@ websearch_to_tsquery('simple', 'pizza pasta')       (AND)
-pizza OR pasta        // ...@@ websearch_to_tsquery('simple', 'pizza OR pasta')    (OR)
-pizza -pasta          // ...@@ websearch_to_tsquery('simple', 'pizza -pasta')      (NOT)
+pizza                 // to_tsvector(...) @@ to_tsquery('simple', '''pizza''')
+pizza pasta           // ...@@ to_tsquery('simple', '''pizza'' & ''pasta''')       (AND)
+pizza OR pasta        // ...@@ to_tsquery('simple', '''pizza'' | ''pasta''')       (OR)
+pizza -pasta          // ...@@ to_tsquery('simple', '''pizza'' & !''pasta''')      (NOT)
+pizza*                // ...@@ to_tsquery('simple', '''pizza'':*')                (prefix wildcard)
 ```
 
+Every term is bound as a plain parameter and quoted as its own `tsquery` lexeme (any embedded
+`'` is doubled, per `tsquery`'s own quoting rule) before being spliced into the query text — a
+term is never concatenated into that text raw. That matters for correctness, not just safety:
+`to_tsquery` requires its own operators (`&`/`|`/`!`) between lexemes, so a value containing one
+of those characters would otherwise either silently change the query's meaning or throw a syntax
+error outright, depending on where it landed.
+
+A trailing `*` on a bare term makes it a prefix match (`to_tsquery`'s `:*`, applied after the
+closing quote) — the only wildcard shape `tsquery` supports; there's no suffix/contains
+equivalent. A `*` anywhere other than the end of a value throws `INVALID_WILDCARD`, same as for
+a `string` attribute.
+
 Several bare terms against the same `postgres_fulltext` attribute, combined at the same
-`AND`/`OR` level (including a single negated term), are fused into **one** `@@` call instead
-of one call per term — `websearch_to_tsquery`'s own syntax already understands `AND`
-(space-separated)/`OR`/`-`, which happens to line up with search-cop's own combinators. This
-keeps a free-text query from re-evaluating the `tsvector` expression (and re-scanning its
-index) once per word. Fusion only merges direct siblings under one `AND`/`OR`/single-term
-`NOT`; a `NOT` wrapping a whole group, or terms split across nested groups with other
-attributes mixed in, compile to separate `@@` calls instead (still correct, just not fused).
+`AND`/`OR` level (including a single negated term), are fused into **one** `@@` call instead of
+one call per term — each term is rendered independently and then joined with `&`/`|`/`!`, never
+by concatenating raw values into a shared string. This keeps a free-text query from
+re-evaluating the `tsvector` expression (and re-scanning its index) once per word. Fusion only
+merges direct siblings under one `AND`/`OR`/single-term `NOT`; a `NOT` wrapping a whole group, or
+terms split across nested groups with other attributes mixed in, compile to separate `@@` calls
+instead (still correct, just not fused).
 
 An optional `language` (default `'simple'` — no stemming, no stopwords) sets the `regconfig`
-passed to `websearch_to_tsquery` — it should match whatever produced the `tsvector` in
-`fields`. Set it to `'english'` (or another language config) for stemming/stopword handling.
+passed to `to_tsquery` — it should match whatever produced the `tsvector` in `fields`. Set it to
+`'english'` (or another language config) for stemming/stopword handling.
 
-Only `:` is supported (no `=`, no ordering operators, no wildcard syntax — `websearch_to_tsquery`
-has its own query mini-language instead). MySQL (`MATCH ... AGAINST`) and SQLite (FTS5) full-text
-are not implemented yet — see [Out of scope](#out-of-scope-for-now).
+Only `:` is supported (no `=`, no ordering operators). The rendering itself (per-term quoting,
+`&`/`|`/`!` glue, `:*` for wildcards, and the outer `@@ to_tsquery(...)` shape) is looked up by
+attribute type, entirely separate from the fusion logic that decides *which* terms get combined
+— fusion has no Postgres-specific knowledge at all. MySQL (`MATCH ... AGAINST`) and SQLite
+(FTS5) full-text — which need a different combined-query syntax and a different outer SQL shape
+for the same fused terms — are not implemented yet, but would slot into that same per-type
+lookup rather than changing how fusion decides what to combine. See
+[Out of scope](#out-of-scope-for-now).
 
 ### Unparseable values never error
 
