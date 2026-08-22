@@ -29,6 +29,10 @@ const OPERATORS_BY_TYPE: Record<AttributeType, Operator[]> = {
 
 const DEFAULT_TOKENIZE = (value: string): string[] => value.split(/\s+/).filter((word) => word.length > 0);
 
+function sanitizeTokenize(tokenize: (value: string) => string[]): (value: string) => string[] {
+  return (value) => tokenize(value).map((word) => word.trim()).filter((word) => word.length > 0);
+}
+
 function isEqualityOperator(operator: Operator): boolean {
   return operator === ':' || operator === '=';
 }
@@ -164,10 +168,10 @@ function resolveValue(
   if (definition.type === 'fulltext') {
     const { term, wildcard } = resolveFulltextTerm({ value: rawValue, predicate });
 
-    if (term === '') return null;
+    if (term.trim() === '') return null;
 
     const { dialect } = definition;
-    const tokenize = dialect === 'tsquery' ? definition.tokenize ?? DEFAULT_TOKENIZE : undefined;
+    const tokenize = dialect === 'tsquery' ? sanitizeTokenize(definition.tokenize ?? DEFAULT_TOKENIZE) : undefined;
 
     if (tokenize && tokenize(term).length === 0) return null;
 

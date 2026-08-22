@@ -588,7 +588,7 @@ attributes: {
   tags: {
     type: 'fulltext',
     dialect: 'tsquery',
-    fields: ["array_to_tsvector(regexp_split_to_array(tags, '\\s+'))"],
+    fields: ["array_to_tsvector(array_remove(regexp_split_to_array(tags, '\\s+'), ''))"],
   },
 }
 ```
@@ -613,7 +613,7 @@ attributes: {
   tags: {
     type: 'fulltext',
     dialect: 'tsquery',
-    fields: ["array_to_tsvector(regexp_split_to_array(lower(tags), '\\s+'))"],
+    fields: ["array_to_tsvector(array_remove(regexp_split_to_array(lower(tags), '\\s+'), ''))"],
     tokenize: (value) => value.toLowerCase().split(/\s+/).filter(Boolean),
   },
 }
@@ -632,7 +632,7 @@ CREATE FUNCTION literal_tsvector(input text, sep text DEFAULT '\s+') RETURNS tsv
     string_agg(quote_literal(tok) || ':' || ord::text, ' ' ORDER BY ord),
     ''
   )::tsvector
-  FROM unnest(regexp_split_to_array(input, sep)) WITH ORDINALITY AS t(tok, ord)
+  FROM unnest(array_remove(regexp_split_to_array(input, sep), '')) WITH ORDINALITY AS t(tok, ord)
 $$ LANGUAGE sql IMMUTABLE PARALLEL SAFE;
 ```
 
@@ -675,7 +675,7 @@ attributes: {
   tags: {
     type: 'fulltext',
     dialect: 'tsquery',
-    fields: ["array_to_tsvector(regexp_split_to_array(tags, '\\s+'))"],
+    fields: ["array_to_tsvector(array_remove(regexp_split_to_array(tags, '\\s+'), ''))"],
   },
 }
 ```
@@ -707,10 +707,16 @@ Several bare terms against the same `fulltext` attribute, combined at the same `
 (including a single negated term), are fused into **one** `@@` call instead of one call per
 term — each term is rendered independently and then joined with `&`/`|`/`!`, never by
 concatenating raw values into a shared string. This keeps a free-text query from re-evaluating
-the `tsvector` expression (and re-scanning its index) once per word. Fusion only merges direct
-siblings under one `AND`/`OR`/single-term `NOT`; a `NOT` wrapping a whole group, or terms split
-across nested groups with other attributes mixed in, compile to separate `@@` calls instead
-(still correct, just not fused). Fusion itself has no Postgres-specific knowledge — the
+the `tsvector` expression (and re-scanning its index) once per word.
+
+Fusion also folds an already-fused nested `AND`/`OR` group back up into an enclosing group when
+both target the same attribute shape (field, language, `dialect`) — implicit `AND` binds tighter
+than `OR`, so `a b OR c` parses as `(a AND b) OR c`, but still compiles to a single `@@` call
+against `('a' & 'b') | 'c'` rather than two separate ones. A `NOT` wrapping a whole group, or a
+nested group whose attribute shape doesn't match the enclosing level (a different field,
+language, or `dialect`, or mixed in with a non-`fulltext` attribute), still compiles to its own
+separate `@@` call instead (still correct, just not fused). Fusion itself has no Postgres-specific
+knowledge — the
 rendering it calls into (per-term quoting, `&`/`|`/`!` glue, `:*` for wildcards, and the outer
 `@@` shape) is looked up by `dialect`. MySQL (`MATCH ... AGAINST`) and SQLite (FTS5) full-text —
 which would need a different combined-query syntax and outer SQL shape for the same fused terms

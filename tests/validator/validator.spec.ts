@@ -790,6 +790,37 @@ describe('validate: "fulltext" attributes', () => {
     expect(field?.tokenize?.('foo,bar')).toEqual(['foo', 'bar']);
   });
 
+  it('strips blank/whitespace-only entries a custom "tokenize" emits alongside real tokens', () => {
+    const literalAttributes: AttributeMap = {
+      _all: {
+        type: 'fulltext',
+        dialect: 'tsquery',
+        fields: ["array_to_tsvector(regexp_split_to_array(name, ','))"],
+        tokenize: (value) => value.split(','),
+      },
+    };
+
+    const { fields } = validate({ expression: parse('"foo,,bar"'), attributes: literalAttributes }) as ValidatedPredicate;
+    const [field] = fields as { tokenize?: (value: string) => string[] }[];
+
+    expect(field?.tokenize?.('foo,,bar')).toEqual(['foo', 'bar']);
+  });
+
+  it('compiles to "alwaysFalse" when a custom "tokenize" reduces the term to only blank tokens', () => {
+    const literalAttributes: AttributeMap = {
+      _all: {
+        type: 'fulltext',
+        dialect: 'tsquery',
+        fields: ["array_to_tsvector(regexp_split_to_array(name, ','))"],
+        tokenize: (value) => value.split(','),
+      },
+    };
+
+    expect(validate({ expression: parse('",,"'), attributes: literalAttributes })).toMatchObject({
+      fields: [{ alwaysFalse: true }],
+    });
+  });
+
   it('compiles to "alwaysFalse" when a custom "tokenize" reduces the term to zero tokens', () => {
     const literalAttributes: AttributeMap = {
       _all: {

@@ -211,6 +211,59 @@ describe('fuseFulltext: recursion into nested groups', () => {
 
     expect(fuseFulltext(expression)).toEqual(not(and(predicate(fusedField({ field: '_all', combinedQuery: `'word1' & 'word2'` })))));
   });
+
+  it('folds an already-fused nested AND group into an enclosing OR as one predicate', () => {
+    const expression = or(
+      and(predicate(fulltextField({ field: '_all', term: 'word1' })), predicate(fulltextField({ field: '_all', term: 'word2' }))),
+      predicate(fulltextField({ field: '_all', term: 'word3' })),
+    );
+
+    expect(fuseFulltext(expression)).toEqual(
+      or(predicate(fusedField({ field: '_all', combinedQuery: `('word1' & 'word2') | 'word3'` }))),
+    );
+  });
+
+  it('folds an already-fused nested OR group into an enclosing AND as one predicate', () => {
+    const expression = and(
+      or(predicate(fulltextField({ field: '_all', term: 'word1' })), predicate(fulltextField({ field: '_all', term: 'word2' }))),
+      predicate(fulltextField({ field: '_all', term: 'word3' })),
+    );
+
+    expect(fuseFulltext(expression)).toEqual(
+      and(predicate(fusedField({ field: '_all', combinedQuery: `('word1' | 'word2') & 'word3'` }))),
+    );
+  });
+
+  it('does not fold a nested group into an enclosing combinator when a sibling inside it is non-fulltext', () => {
+    // word1 AND word2 OR (word3 AND status:online)
+    const statusField: ValidatedField = { field: 'status', value: 'online', operator: '=', caseSensitive: true };
+
+    const expression = or(
+      and(predicate(fulltextField({ field: '_all', term: 'word1' })), predicate(fulltextField({ field: '_all', term: 'word2' }))),
+      and(predicate(fulltextField({ field: '_all', term: 'word3' })), predicate(statusField)),
+    );
+
+    expect(fuseFulltext(expression)).toEqual(
+      or(
+        and(predicate(fusedField({ field: '_all', combinedQuery: `'word1' & 'word2'` }))),
+        and(predicate(fulltextField({ field: '_all', term: 'word3' })), predicate(statusField)),
+      ),
+    );
+  });
+
+  it('does not fold a nested group into an enclosing combinator when the fields differ', () => {
+    const expression = or(
+      and(predicate(fulltextField({ field: 'a', term: 'word1' })), predicate(fulltextField({ field: 'a', term: 'word2' }))),
+      predicate(fulltextField({ field: 'b', term: 'word3' })),
+    );
+
+    expect(fuseFulltext(expression)).toEqual(
+      or(
+        and(predicate(fusedField({ field: 'a', combinedQuery: `'word1' & 'word2'` }))),
+        predicate(fulltextField({ field: 'b', term: 'word3' })),
+      ),
+    );
+  });
 });
 
 describe('combineFulltextTerms: "to_tsquery" dialect', () => {

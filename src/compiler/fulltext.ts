@@ -2,11 +2,9 @@ import type { FulltextEngine, ValidatedExpression, ValidatedField, ValidatedPred
 
 type Combinator = 'and' | 'or';
 
-type FulltextTerm = {
-  value: string,
-  wildcard: boolean,
-  negated: boolean,
-};
+type FulltextTerm =
+  | { value: string, wildcard: boolean, negated: boolean }
+  | { raw: string, negated: boolean };
 
 type FulltextField = {
   field: string,
@@ -18,6 +16,13 @@ type FulltextField = {
   tokenize?: (value: string) => string[],
 };
 
+type FusedFulltextField = {
+  field: string,
+  fulltext: FulltextEngine,
+  combinedQuery: string,
+  language: string,
+};
+
 type FulltextCandidate = {
   engine: FulltextEngine,
   languages: string[],
@@ -27,6 +32,8 @@ type FulltextCandidate = {
   phrases: boolean,
   tokenize?: (value: string) => string[],
   negated: boolean,
+  // true when `values` are already-rendered tsquery text rather than raw terms needing quoting.
+  raw: boolean,
   position?: number,
 };
 
@@ -49,9 +56,11 @@ function joinLexemes({ words, phrases }: { words: string[], phrases: boolean }):
 
 function combineTerms(
   { combinator, terms, renderTerm }:
-  { combinator: Combinator, terms: FulltextTerm[], renderTerm: (term: FulltextTerm) => string },
+  { combinator: Combinator, terms: FulltextTerm[], renderTerm: (term: { value: string, wildcard: boolean, negated: boolean }) => string },
 ): string {
   const rendered = terms.map((term) => {
+    if ('raw' in term) return term.negated ? `!(${term.raw})` : `(${term.raw})`;
+
     const value = renderTerm(term);
 
     return term.negated ? `!${value}` : value;
@@ -127,8 +136,13 @@ function isFulltextField(field: ValidatedField): field is FulltextField {
   return 'fulltext' in field && 'term' in field;
 }
 
-function candidateKey(candidate: FulltextCandidate): string {
-  return JSON.stringify([candidate.engine, candidate.fieldShape, candidate.languages, candidate.phrases]);
+function isFusedFulltextField(field: ValidatedField): field is FusedFulltextField {
+  return 'fulltext' in field && 'combinedQuery' in field;
+}
+
+// Excludes "phrases" - a raw candidate's phrase-joining is already baked into its rendered text.
+function candidateShapeKey(candidate: FulltextCandidate): string {
+  return JSON.stringify([candidate.engine, candidate.fieldShape, candidate.languages]);
 }
 
 function asFulltextCandidate(child: ValidatedExpression): FulltextCandidate | null {
@@ -145,6 +159,24 @@ function asFulltextCandidate(child: ValidatedExpression): FulltextCandidate | nu
       phrases,
       tokenize,
       negated: false,
+      raw: false,
+      position: child.position,
+    };
+  }
+
+  // Lets an already-fused nested group fold into an enclosing group (cross AND/OR-boundary fusion).
+  if (child.type === 'predicate' && child.fields.length > 0 && child.fields.every(isFusedFulltextField)) {
+    const fields = child.fields as FusedFulltextField[];
+
+    return {
+      engine: fields[0]!.fulltext,
+      languages: fields.map((field) => field.language),
+      fieldShape: fields.map((field) => field.field),
+      values: fields.map((field) => field.combinedQuery),
+      wildcard: false,
+      phrases: false,
+      negated: false,
+      raw: true,
       position: child.position,
     };
   }
@@ -162,6 +194,7 @@ function asFulltextCandidate(child: ValidatedExpression): FulltextCandidate | nu
         phrases: field.phrases,
         tokenize: field.tokenize,
         negated: true,
+        raw: false,
         position: child.child.position,
       };
     }
@@ -171,7 +204,9 @@ function asFulltextCandidate(child: ValidatedExpression): FulltextCandidate | nu
 }
 
 function buildFusedPredicate({ combinator, group }: { combinator: Combinator, group: FulltextCandidate[] }): ValidatedPredicate {
-  const { engine, languages, fieldShape, phrases, tokenize, position } = group[0]!;
+  const { engine, languages, fieldShape, position } = group[0]!;
+  // Raw candidates carry no real phrases/tokenize - prefer a non-raw member if one exists.
+  const { phrases, tokenize } = group.find((candidate) => !candidate.raw) ?? group[0]!;
 
   const fields: ValidatedField[] = fieldShape.map((field, index) => ({
     field,
@@ -180,7 +215,11 @@ function buildFusedPredicate({ combinator, group }: { combinator: Combinator, gr
     combinedQuery: combineFulltextTerms({
       engine,
       combinator,
-      terms: group.map((candidate) => ({ value: candidate.values[index] as string, wildcard: candidate.wildcard, negated: candidate.negated })),
+      terms: group.map((candidate) => (
+        candidate.raw
+          ? { raw: candidate.values[index] as string, negated: candidate.negated }
+          : { value: candidate.values[index] as string, wildcard: candidate.wildcard, negated: candidate.negated }
+      )),
       phrases,
       tokenize,
     }),
@@ -189,14 +228,43 @@ function buildFusedPredicate({ combinator, group }: { combinator: Combinator, gr
   return { type: 'predicate', fields, position };
 }
 
+// Lets a fused nested group (single-child AND/OR) be recognized as a candidate one level up.
+function unwrapSingleChild(expression: ValidatedExpression): ValidatedExpression {
+  if ((expression.type === 'and' || expression.type === 'or') && expression.children.length === 1) {
+    return unwrapSingleChild(expression.children[0]!);
+  }
+
+  return expression;
+}
+
 function fuseSiblings({ combinator, children }: { combinator: Combinator, children: ValidatedExpression[] }): ValidatedExpression[] {
-  const slots = children.map((child) => ({ child, candidate: asFulltextCandidate(child) }));
+  const fusedChildren = children.map((child) => fuseFulltext(child));
+  const slots = fusedChildren.map((child) => ({ child, candidate: asFulltextCandidate(unwrapSingleChild(child)) }));
+
+  // Raw candidates adopt a same-shape non-raw sibling's "phrases" so they can still join its group.
+  const canonicalPhrases = new Map<string, boolean>();
+
+  slots.forEach(({ candidate }) => {
+    if (!candidate || candidate.raw) return;
+
+    const shape = candidateShapeKey(candidate);
+
+    if (!canonicalPhrases.has(shape)) canonicalPhrases.set(shape, candidate.phrases);
+  });
+
+  function groupKey(candidate: FulltextCandidate): string {
+    const shape = candidateShapeKey(candidate);
+    const phrases = candidate.raw ? canonicalPhrases.get(shape) ?? 'raw' : candidate.phrases;
+
+    return `${shape}::${phrases}`;
+  }
+
   const groups = new Map<string, FulltextCandidate[]>();
 
   slots.forEach(({ candidate }) => {
     if (!candidate) return;
 
-    const key = candidateKey(candidate);
+    const key = groupKey(candidate);
     const group = groups.get(key);
 
     if (group) {
@@ -209,9 +277,9 @@ function fuseSiblings({ combinator, children }: { combinator: Combinator, childr
   const emitted = new Set<string>();
 
   return slots.flatMap(({ child, candidate }) => {
-    if (!candidate) return [fuseFulltext(child)];
+    if (!candidate) return [child];
 
-    const key = candidateKey(candidate);
+    const key = groupKey(candidate);
     const group = groups.get(key)!;
 
     if (group.length === 1) return [child];
