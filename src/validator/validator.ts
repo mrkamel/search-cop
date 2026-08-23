@@ -1,12 +1,20 @@
 import { validate as isUuid } from 'uuid';
 import type { Expression, Operator, PredicateExpression } from '../ast/types.js';
-import type { AttributeDefinition, AttributeField, AttributeMap, NullAttributeDefinition } from '../attributes/types.js';
+import type {
+  AttributeDefinition,
+  AttributeField,
+  AttributeMap,
+  AttributeType,
+  FulltextAttributeDefinition,
+  NullAttributeDefinition,
+  TagAttributeDefinition,
+} from '../attributes/types.js';
 import { LIKE_ESCAPE_CHARACTER } from './types.js';
-import type { ValidatedExpression, ValidatedField, ValidatedOperator, ValidatedPredicate, ValidatedValue } from './types.js';
+import type { FulltextEngine, ValidatedExpression, ValidatedField, ValidatedOperator, ValidatedPredicate, ValidatedValue } from './types.js';
 import { SearchCopError } from '../errors/errors.js';
 import { DEFAULT_FIELD } from '../parser/parser.js';
 
-const OPERATORS_BY_TYPE: Record<AttributeDefinition['type'], Operator[]> = {
+const OPERATORS_BY_TYPE: Record<AttributeType, Operator[]> = {
   string: [':', '=', '>', '>=', '<', '<='],
   number: [':', '=', '>', '>=', '<', '<='],
   boolean: [':', '='],
@@ -15,7 +23,15 @@ const OPERATORS_BY_TYPE: Record<AttributeDefinition['type'], Operator[]> = {
   enum: [':', '='],
   uuid: [':', '='],
   null: [':', '='],
+  fulltext: [':'],
+  tag: [':'],
 };
+
+const DEFAULT_TOKENIZE = (value: string): string[] => value.split(/\s+/).filter((word) => word.length > 0);
+
+function sanitizeTokenize(tokenize: (value: string) => string[]): (value: string) => string[] {
+  return (value) => tokenize(value).map((word) => word.trim()).filter((word) => word.length > 0);
+}
 
 function isEqualityOperator(operator: Operator): boolean {
   return operator === ':' || operator === '=';
@@ -69,6 +85,22 @@ function validatePredicate({ predicate, attributes }: { predicate: PredicateExpr
     );
   }
 
+  // Rewrites into a synthetic predicate against the target attribute and re-validates, so tag lookups reuse the normal predicate path.
+  if (attribute.type === 'tag') {
+    if (attribute.attribute === predicate.field) {
+      throw new SearchCopError(
+        'CIRCULAR_TAG_REFERENCE',
+        `Attribute "${predicate.field}" has type "tag" with "attribute" pointing at itself.`,
+        predicate.position,
+      );
+    }
+
+    return validatePredicate({
+      predicate: { type: 'predicate', field: attribute.attribute, operator: ':', value: `${predicate.field}:${predicate.value}`, position: predicate.position },
+      attributes,
+    });
+  }
+
   if (attribute.fields?.length && attribute.fields.length > 1 && !isEqualityOperator(predicate.operator)) {
     throw new SearchCopError(
       'INVALID_OPERATOR',
@@ -102,7 +134,6 @@ function resolveField(
   { entry, predicate, attribute }:
   { entry: AttributeField, predicate: PredicateExpression, attribute: AttributeDefinition }
 ): ValidatedField {
-
   if (typeof entry === 'string') {
     return resolveColumn({ field: entry, predicate, definition: attribute });
   }
@@ -125,10 +156,37 @@ function resolveValue(
   { predicate, definition }:
   { predicate: PredicateExpression, definition: AttributeDefinition }
 ):
-  | { value: ValidatedValue; operator: ValidatedOperator; caseSensitive: boolean | 'lower' | 'upper' }
+  | { value: ValidatedValue, operator: ValidatedOperator, caseSensitive: boolean | 'lower' | 'upper' }
   | { operator: 'IS NULL' | 'IS NOT NULL' }
+  | {
+    fulltext: FulltextEngine, term: string, wildcard: boolean, phrases: boolean,
+    language: string, tokenize?: (value: string) => string[],
+  }
   | null {
   const { value: rawValue, operator } = predicate;
+
+  if (definition.type === 'fulltext') {
+    const { term, wildcard } = resolveFulltextTerm({ value: rawValue, predicate });
+
+    if (term.trim() === '') return null;
+
+    const { dialect } = definition;
+    const tokenize = dialect === 'tsquery' ? sanitizeTokenize(definition.tokenize ?? DEFAULT_TOKENIZE) : undefined;
+
+    if (tokenize && tokenize(term).length === 0) return null;
+
+    // A whitespace-only wildcarded term would otherwise render as an empty (matches-everything) tsquery.
+    if (dialect === 'to_tsquery' && wildcard && DEFAULT_TOKENIZE(term).length === 0) return null;
+
+    return {
+      fulltext: dialect,
+      term,
+      wildcard,
+      phrases: definition.phrases ?? dialect === 'to_tsquery',
+      language: definition.language ?? 'simple',
+      tokenize,
+    };
+  }
 
   const caseSensitive = definition.type === 'string' ? definition.caseSensitive ?? true : true;
 
@@ -143,23 +201,49 @@ function resolveValue(
     return { value: foldCase({ value: pattern, caseSensitive }), operator: 'LIKE', caseSensitive };
   }
 
-  // A field-level override may declare a stricter type than the outer attribute, whose
-  // operator was only validated against the outer type.
+  // Field-level overrides may declare a stricter type than the outer attribute's already-validated operator.
   if (!OPERATORS_BY_TYPE[definition.type].includes(operator)) {
     return null;
   }
 
-  if (definition.type === 'null') {
-    return resolveNull(rawValue, definition);
+  // "tag" only makes sense as a top-level attribute, not a field-level override.
+  if (definition.type === 'tag') {
+    return null;
   }
 
-  const value = convertValue(rawValue, definition);
+  if (definition.type === 'null') {
+    return resolveNull({ rawValue, definition });
+  }
+
+  const value = convertValue({ value: rawValue, definition });
 
   return value === null ? null : { value, operator: operator === ':' ? '=' : operator, caseSensitive };
 }
 
-// "*" -> "%", "\*" -> a literal "*", everything else untouched. A bare "*" not at the
-// start/end of "value" is a malformed wildcard attempt and throws.
+function resolveFulltextTerm({ value, predicate }: { value: string, predicate: PredicateExpression }): { term: string, wildcard: boolean } {
+  let wildcard = false;
+
+  const term = value.replace(/\\.|\*/g, (match, offset: number, fullString: string) => {
+    if (match === '*') {
+      if (offset !== fullString.length - 1) {
+        throw new SearchCopError(
+          'INVALID_WILDCARD',
+          `"*" is only valid at the end of a value for a fulltext attribute, got "${value}" for attribute "${predicate.field}".`,
+          predicate.position,
+        );
+      }
+
+      wildcard = true;
+
+      return '';
+    }
+
+    return match.replace(/^\\/, '');
+  });
+
+  return { term, wildcard };
+}
+
 function replaceWildcards({ value, predicate }: { value: string, predicate: PredicateExpression }): string {
   return value.replace(/\\.|\*/g, (match, offset: number, fullString: string) => {
     if (match === '*' && offset !== 0 && offset !== fullString.length - 1) {
@@ -188,14 +272,19 @@ function toLikePattern(
   return `${leftWildcard ? '%' : ''}${resolved}${rightWildcard ? '%' : ''}`;
 }
 
-function resolveNull(rawValue: string, definition: NullAttributeDefinition): { operator: 'IS NULL' | 'IS NOT NULL' } | null {
+function resolveNull(
+  { rawValue, definition }: { rawValue: string, definition: NullAttributeDefinition },
+): { operator: 'IS NULL' | 'IS NOT NULL' } | null {
   if (definition.isNull.includes(rawValue)) return { operator: 'IS NULL' };
   if (definition.isNotNull.includes(rawValue)) return { operator: 'IS NOT NULL' };
 
   return null;
 }
 
-function convertValue(value: string, definition: Exclude<AttributeDefinition, NullAttributeDefinition>): ValidatedValue | null {
+function convertValue(
+  { value, definition }:
+  { value: string, definition: Exclude<AttributeDefinition, NullAttributeDefinition | FulltextAttributeDefinition | TagAttributeDefinition> },
+): ValidatedValue | null {
   switch (definition.type) {
     case 'string':
       return foldCase({ value, caseSensitive: definition.caseSensitive ?? true });
@@ -207,13 +296,13 @@ function convertValue(value: string, definition: Exclude<AttributeDefinition, Nu
       return convertBoolean(value);
 
     case 'date':
-      return convertDate(value, false);
+      return convertDate({ value, allowTime: false });
 
     case 'datetime':
-      return convertDate(value, true);
+      return convertDate({ value, allowTime: true });
 
     case 'enum':
-      return convertEnum(value, definition.values);
+      return convertEnum({ value, values: definition.values });
 
     case 'uuid':
       return convertUuidValue(value);
@@ -231,7 +320,7 @@ function convertBoolean(value: string): boolean | null {
   return null;
 }
 
-function convertEnum(value: string, values: string[] | Record<string, string>): string | null {
+function convertEnum({ value, values }: { value: string, values: string[] | Record<string, string> }): string | null {
   if (Array.isArray(values)) {
     return values.includes(value) ? value : null;
   }
@@ -243,13 +332,13 @@ function convertUuidValue(value: string): string | null {
   return isUuid(value) ? value.toLowerCase() : null;
 }
 
-function convertDate(value: string, allowTime: boolean): Date | null {
+function convertDate({ value, allowTime }: { value: string, allowTime: boolean }): Date | null {
   const dateOnlyMatch = DATE_ONLY.exec(value);
 
   if (dateOnlyMatch) {
     const [, year, month, day] = dateOnlyMatch;
 
-    return buildUtcDate(Number(year), Number(month), Number(day), 0, 0, 0, 0);
+    return buildUtcDate({ year: Number(year), month: Number(month), day: Number(day), hour: 0, minute: 0, second: 0, millis: 0 });
   }
 
   if (allowTime) {
@@ -258,7 +347,15 @@ function convertDate(value: string, allowTime: boolean): Date | null {
     if (dateTimeMatch) {
       const [, year, month, day, hour, minute, second, fraction, offset] = dateTimeMatch;
       const millis = fraction ? Math.round(Number(`0.${fraction}`) * 1000) : 0;
-      const date = buildUtcDate(Number(year), Number(month), Number(day), Number(hour), Number(minute), Number(second), millis);
+      const date = buildUtcDate({
+        year: Number(year),
+        month: Number(month),
+        day: Number(day),
+        hour: Number(hour),
+        minute: Number(minute),
+        second: Number(second),
+        millis,
+      });
 
       if (date === null) {
         return null;
@@ -278,7 +375,10 @@ function convertDate(value: string, allowTime: boolean): Date | null {
   return null;
 }
 
-function buildUtcDate(year: number, month: number, day: number, hour: number, minute: number, second: number, millis: number): Date | null {
+function buildUtcDate(
+  { year, month, day, hour, minute, second, millis }:
+  { year: number, month: number, day: number, hour: number, minute: number, second: number, millis: number },
+): Date | null {
   const date = new Date(Date.UTC(year, month - 1, day, hour, minute, second, millis));
 
   if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) {
