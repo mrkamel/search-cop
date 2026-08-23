@@ -242,6 +242,7 @@ describe('compile: case sensitivity', () => {
     const mixedCaseAttributes: AttributeMap = {
       search: { type: 'string', fields: ['name', { field: 'description', type: 'string', caseSensitive: false }] },
     };
+
     const [sql, params] = getSqlAndParams(compileQuery({ query: 'search:Value', attributeMap: mixedCaseAttributes }));
 
     expect(sql).toContain(`(name LIKE ? ESCAPE '!' OR LOWER(description) LIKE ? ESCAPE '!')`);
@@ -450,6 +451,7 @@ describe('compile: "fulltext" attributes', () => {
     const attributesWithLanguage: AttributeMap = {
       _all: { type: 'fulltext', dialect: 'to_tsquery', language: 'english', fields: ['search_vector'] },
     };
+
     const [sql, params] = getSqlAndParams(compileQuery({ query: 'word1', attributeMap: attributesWithLanguage }));
 
     expect(sql).toContain(`search_vector @@ to_tsquery(?, ?)`);

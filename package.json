@@ -1,7 +1,7 @@
 {
   "name": "search-cop",
   "version": "0.3.0",
-  "description": "A small search DSL that compiles to TypeORM SelectQueryBuilder queries",
+  "description": "A powerful search DSL that compiles to TypeORM SelectQueryBuilder queries",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

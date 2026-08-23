@@ -194,6 +194,7 @@ describe('fuseFulltext: fusion boundaries', () => {
 describe('fuseFulltext: recursion into nested groups', () => {
   it('fuses within a nested OR group, leaving the outer AND structure intact', () => {
     const statusField: ValidatedField = { field: 'status', value: 'online', operator: '=', caseSensitive: true };
+
     const expression = and(
       or(predicate(fulltextField({ field: '_all', term: 'word1' })), predicate(fulltextField({ field: '_all', term: 'word2' }))),
       predicate(statusField),

@@ -1,6 +1,6 @@
 # search-cop
 
-A small search DSL that compiles to a TypeORM `SelectQueryBuilder`.
+A powerful search DSL that compiles to a TypeORM `SelectQueryBuilder`.
 
 ```ts
 import { search } from 'search-cop';
@@ -319,11 +319,12 @@ Every `fields` entry — whether a plain string, or the implicit default when `f
 omitted (the attribute's own key) — is inserted into the generated SQL **verbatim**: no
 escaping, and no alias-qualification. search-cop doesn't know whether your column name is
 a safe unquoted identifier, doesn't know your database's quote character, and doesn't
-support joins (so there's never a table to disambiguate against) — you do, so quoting
-(e.g. `'"createdAt"'` to preserve case on Postgres) and qualification (e.g. `'author.name'`
-if you've added your own `leftJoin`) are entirely your responsibility whenever you need
-them. A plain `'firstName'` is exactly as raw as any other entry; it's just already a
-valid bare identifier, so it needs nothing extra.
+create or know about any joins — you do, so quoting (e.g. `'"createdAt"'` to preserve case
+on Postgres) and qualification (e.g. `'author.name'` if you've added your own `leftJoin`)
+are entirely your responsibility whenever you need them. A plain `'firstName'` is exactly
+as raw as any other entry; it's just already a valid bare identifier, so it needs nothing
+extra. Querying a joined column works exactly like any other column — see the
+`searchCondition()` example above — search-cop just never adds the join itself.
 
 This also means a field entry doesn't have to be a column name at all — anything valid in
 SQL works: a cast, a computed expression, string concatenation, and so on. A `string`-typed
@@ -754,8 +755,12 @@ enum value, ...) — see [Unparseable values never error](#unparseable-values-ne
 
 ## Out of scope (for now)
 
-Associations/joins, full-text search on MySQL (`MATCH ... AGAINST`) or SQLite (FTS5) — only
-[Postgres full-text](#full-text-search-postgres) is implemented so far — a `!=` operator
+Automatically generating joins for associations — search-cop never creates a join itself;
+build it on your own queryBuilder and qualify the field (see
+[Combining with your own queryBuilder](#combining-with-your-own-querybuilder) and
+[Fields are raw SQL](#fields-are-raw-sql)) — full-text search on MySQL (`MATCH ... AGAINST`)
+or SQLite (FTS5) — only [Postgres full-text](#full-text-search-postgres) is implemented so
+far — a `!=` operator
 (negate with [`NOT`](#query-syntax) instead), range syntax (`1..100`), query
 optimization/planning beyond the [full-text fusion](#full-text-search-postgres) already
 described, pagination/sorting, raw SQL as the top-level query language (a

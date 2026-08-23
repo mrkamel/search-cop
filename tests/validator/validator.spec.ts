@@ -478,6 +478,7 @@ describe('validate: multi-field attributes', () => {
     const attributesWithRaw: AttributeMap = {
       search: { type: 'string', fields: ['name', 'CAST(id AS TEXT)'] },
     };
+
     const result = validate({ expression: parse('search:Fred'), attributes: attributesWithRaw });
 
     expect(result).toMatchObject({
@@ -622,6 +623,7 @@ describe('validate: default field ("_all")', () => {
       ...attributes,
       _all: { type: 'string', fields: ['name', 'description', 'CAST(id AS TEXT)'] },
     };
+
     const result = validate({ expression: parse('Fred'), attributes: attributesWithAll });
 
     expect(result).toMatchObject({
@@ -638,6 +640,7 @@ describe('validate: default field ("_all")', () => {
       ...attributes,
       _all: { type: 'string', fields: ['name', { field: 'id', type: 'uuid' }] },
     };
+
     const result = validate({ expression: parse('Fred'), attributes: attributesWithAll });
 
     expect(result).toMatchObject({ fields: [{ field: 'name', value: 'Fred' }, { alwaysFalse: true }] });
