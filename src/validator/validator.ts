@@ -118,18 +118,6 @@ function validatePredicate({ predicate, attributes }: { predicate: PredicateExpr
   };
 }
 
-function hasWildcard(value: string): boolean {
-  let found = false;
-
-  value.replace(/\\.|\*/g, (match) => {
-    if (match === '*') found = true;
-
-    return match;
-  });
-
-  return found;
-}
-
 function resolveField(
   { entry, predicate, attribute }:
   { entry: AttributeField, predicate: PredicateExpression, attribute: AttributeDefinition }
@@ -193,8 +181,10 @@ function resolveValue(
   if (definition.type === 'string' && operator === ':') {
     const pattern = toLikePattern({
       value: rawValue,
-      leftWildcard: definition.wildcards === true || definition.leftWildcard === true,
-      rightWildcard: definition.wildcards === true || definition.rightWildcard === true,
+      autoLeftWildcard: definition.autoWildcards === true || definition.autoLeftWildcard === true,
+      autoRightWildcard: definition.autoWildcards === true || definition.autoRightWildcard === true,
+      allowLeftWildcard: definition.allowWildcards !== false && definition.allowLeftWildcard !== false,
+      allowRightWildcard: definition.allowWildcards !== false && definition.allowRightWildcard !== false,
       predicate,
     });
 
@@ -244,9 +234,19 @@ function resolveFulltextTerm({ value, predicate }: { value: string, predicate: P
   return { term, wildcard };
 }
 
-function replaceWildcards({ value, predicate }: { value: string, predicate: PredicateExpression }): string {
-  return value.replace(/\\.|\*/g, (match, offset: number, fullString: string) => {
-    if (match === '*' && offset !== 0 && offset !== fullString.length - 1) {
+function resolveWildcards(
+  { value, allowLeftWildcard, allowRightWildcard, predicate }:
+  { value: string, allowLeftWildcard: boolean, allowRightWildcard: boolean, predicate: PredicateExpression }
+): { resolved: string, hasWildcard: boolean } {
+  let hasWildcard = false;
+
+  const resolved = value.replace(/\\.|\*/g, (match, offset: number, fullString: string) => {
+    if (match !== '*') return match.replace(/^\\/, '');
+
+    const isLeft = offset === 0;
+    const isRight = offset === fullString.length - 1;
+
+    if (!isLeft && !isRight) {
       throw new SearchCopError(
         'INVALID_WILDCARD',
         `"*" is only valid at the start and/or end of a value, got "${value}" for attribute "${predicate.field}".`,
@@ -254,22 +254,29 @@ function replaceWildcards({ value, predicate }: { value: string, predicate: Pred
       );
     }
 
-    if (match === '*') return '%';
+    if (isLeft ? !allowLeftWildcard : !allowRightWildcard) return '';
 
-    return match.replace(/^\\/, '');
+    hasWildcard = true;
+
+    return '%';
   });
+
+  return { resolved, hasWildcard };
 }
 
 function toLikePattern(
-  { value, leftWildcard, rightWildcard, predicate }:
-  { value: string, leftWildcard: boolean, rightWildcard: boolean, predicate: PredicateExpression }
+  { value, autoLeftWildcard, autoRightWildcard, allowLeftWildcard, allowRightWildcard, predicate }:
+  {
+    value: string, autoLeftWildcard: boolean, autoRightWildcard: boolean,
+    allowLeftWildcard: boolean, allowRightWildcard: boolean, predicate: PredicateExpression,
+  }
 ): string {
   const escaped = value.replace(new RegExp(`[${LIKE_ESCAPE_CHARACTER}%_]`, 'g'), (char) => `${LIKE_ESCAPE_CHARACTER}${char}`);
-  const resolved = replaceWildcards({ value: escaped, predicate });
+  const { resolved, hasWildcard } = resolveWildcards({ value: escaped, allowLeftWildcard, allowRightWildcard, predicate });
 
-  if (hasWildcard(escaped)) return resolved;
+  if (hasWildcard) return resolved;
 
-  return `${leftWildcard ? '%' : ''}${resolved}${rightWildcard ? '%' : ''}`;
+  return `${autoLeftWildcard ? '%' : ''}${resolved}${autoRightWildcard ? '%' : ''}`;
 }
 
 function resolveNull(

@@ -5,6 +5,25 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0]
+
+### Added
+
+- `allowWildcards`/`allowLeftWildcard`/`allowRightWildcard: boolean` options on `string`
+  attributes (all default `true`) — set to `false` to silently strip a user-typed `*` on
+  that side, as if it had never been typed, falling back to whatever `autoWildcards`
+  behavior is configured. Previously a user-typed `*` was always honored regardless of the
+  wildcard options, which only ever controlled auto-adding one. See
+  [Restricting user wildcards](README.md#restricting-user-wildcards).
+
+### Changed
+
+- **Breaking:** `wildcards`/`leftWildcard`/`rightWildcard` options on `string` attributes
+  are renamed to `autoWildcards`/`autoLeftWildcard`/`autoRightWildcard`, to distinguish them
+  from the new `allowWildcards`/`allowLeftWildcard`/`allowRightWildcard` options. Behavior is
+  unchanged — only the option names changed. See
+  [Implicit wildcards](README.md#implicit-wildcards).
+
 ## [0.3.0]
 
 ### Added
