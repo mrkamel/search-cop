@@ -209,8 +209,8 @@ describe('search: escaped wildcards ("\\*")', () => {
   });
 });
 
-describe('search: "wildcards" option (implicit contains matching)', () => {
-  const wildcardOptionAttributes: AttributeMap = { name: { type: 'string', wildcards: true } };
+describe('search: "autoWildcards" option (implicit contains matching)', () => {
+  const wildcardOptionAttributes: AttributeMap = { name: { type: 'string', autoWildcards: true } };
 
   it('matches a bare-colon value anywhere in the field, without an explicit "*"', async () => {
     const match = await createProduct({ name: 'First Name' });
@@ -241,7 +241,7 @@ describe('search: "wildcards" option (implicit contains matching)', () => {
     const products = await search({
       repository: ProductRepository,
       query: 'Name',
-      attributes: { _all: { type: 'string', fields: ['name', 'description'], wildcards: true } },
+      attributes: { _all: { type: 'string', fields: ['name', 'description'], autoWildcards: true } },
     }).getMany();
 
     expect(products.map((product) => product.name).sort()).toEqual([matchesByName.name, matchesByDescription.name].sort());

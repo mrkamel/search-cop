@@ -11,9 +11,12 @@ interface BaseAttributeDefinition {
 export interface StringAttributeDefinition extends BaseAttributeDefinition {
   type: 'string';
   caseSensitive?: boolean | 'lower' | 'upper';
-  wildcards?: boolean;
-  leftWildcard?: boolean;
-  rightWildcard?: boolean;
+  autoWildcards?: boolean;
+  autoLeftWildcard?: boolean;
+  autoRightWildcard?: boolean;
+  allowWildcards?: boolean;
+  allowLeftWildcard?: boolean;
+  allowRightWildcard?: boolean;
 }
 
 export interface FulltextAttributeDefinition extends BaseAttributeDefinition {

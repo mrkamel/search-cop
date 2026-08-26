@@ -48,7 +48,7 @@ const nullAttributes: AttributeMap = {
 };
 
 const wildcardOptionAttributes: AttributeMap = {
-  name: { type: 'string', wildcards: true },
+  name: { type: 'string', autoWildcards: true },
 };
 
 beforeAll(async () => {
@@ -178,7 +178,7 @@ describe('compile: escaped wildcards ("\\*")', () => {
   });
 });
 
-describe('compile: "wildcards" option (implicit contains matching)', () => {
+describe('compile: "autoWildcards" option (implicit contains matching)', () => {
   it('compiles a bare-colon value to a "%...%" LIKE pattern', () => {
     const [sql, params] = getSqlAndParams(compileQuery({ query: 'name:Name', attributeMap: wildcardOptionAttributes }));
 
@@ -193,16 +193,16 @@ describe('compile: "wildcards" option (implicit contains matching)', () => {
     expect(params).toEqual(['Name']);
   });
 
-  it('"leftWildcard" prefixes the value with "%" only', () => {
-    const leftWildcardAttributes: AttributeMap = { name: { type: 'string', leftWildcard: true } };
-    const [, params] = getSqlAndParams(compileQuery({ query: 'name:Name', attributeMap: leftWildcardAttributes }));
+  it('"autoLeftWildcard" prefixes the value with "%" only', () => {
+    const autoLeftWildcardAttributes: AttributeMap = { name: { type: 'string', autoLeftWildcard: true } };
+    const [, params] = getSqlAndParams(compileQuery({ query: 'name:Name', attributeMap: autoLeftWildcardAttributes }));
 
     expect(params).toEqual(['%Name']);
   });
 
-  it('"rightWildcard" appends "%" to the value only', () => {
-    const rightWildcardAttributes: AttributeMap = { name: { type: 'string', rightWildcard: true } };
-    const [, params] = getSqlAndParams(compileQuery({ query: 'name:Name', attributeMap: rightWildcardAttributes }));
+  it('"autoRightWildcard" appends "%" to the value only', () => {
+    const autoRightWildcardAttributes: AttributeMap = { name: { type: 'string', autoRightWildcard: true } };
+    const [, params] = getSqlAndParams(compileQuery({ query: 'name:Name', attributeMap: autoRightWildcardAttributes }));
 
     expect(params).toEqual(['Name%']);
   });

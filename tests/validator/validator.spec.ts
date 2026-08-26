@@ -13,9 +13,13 @@ const attributes: AttributeMap = {
   name: { type: 'string' },
   nameCaseInsensitive: { type: 'string', caseSensitive: false },
   nameCaseInsensitiveUpper: { type: 'string', caseSensitive: 'upper' },
-  nameContains: { type: 'string', wildcards: true },
-  nameEndsWith: { type: 'string', leftWildcard: true },
-  nameStartsWith: { type: 'string', rightWildcard: true },
+  nameContains: { type: 'string', autoWildcards: true },
+  nameEndsWith: { type: 'string', autoLeftWildcard: true },
+  nameStartsWith: { type: 'string', autoRightWildcard: true },
+  nameNoWildcards: { type: 'string', allowWildcards: false },
+  nameNoWildcardsButAuto: { type: 'string', allowWildcards: false, autoWildcards: true },
+  nameNoLeftWildcard: { type: 'string', allowLeftWildcard: false },
+  nameNoRightWildcard: { type: 'string', allowRightWildcard: false },
   createdAt: { type: 'datetime' },
   releaseDate: { type: 'date' },
   id: { type: 'uuid' },
@@ -323,9 +327,13 @@ describe('validate: "wildcards" option (implicit contains matching)', () => {
     expect(validateQuery('nameContains:*Name')).toMatchObject({ fields: [{ operator: 'LIKE', value: '%Name' }] });
   });
 
+  it('treats an escaped "\\*" as a literal, non-wildcard character — still auto-wraps, no leftover "\\"', () => {
+    expect(validateQuery('nameContains:Name\\*')).toMatchObject({ fields: [{ operator: 'LIKE', value: '%Name*%' }] });
+  });
+
   it('does not double-wrap an explicit "*" on a "string"-typed field override under a non-string outer attribute', () => {
     const attributesWithStringOverride: AttributeMap = {
-      price: { type: 'number', fields: [{ field: 'sku', type: 'string', wildcards: true }] },
+      price: { type: 'number', fields: [{ field: 'sku', type: 'string', autoWildcards: true }] },
     };
 
     expect(validate({ expression: parse('price:abc*'), attributes: attributesWithStringOverride })).toMatchObject({
@@ -342,7 +350,7 @@ describe('validate: "wildcards" option (implicit contains matching)', () => {
   });
 
   it('respects "caseSensitive: false" on the auto-wrapped value', () => {
-    const attributesWithBoth: AttributeMap = { nameContains: { type: 'string', wildcards: true, caseSensitive: false } };
+    const attributesWithBoth: AttributeMap = { nameContains: { type: 'string', autoWildcards: true, caseSensitive: false } };
 
     expect(validate({ expression: parse('nameContains:Name'), attributes: attributesWithBoth })).toMatchObject({
       fields: [{ operator: 'LIKE', value: '%name%', caseSensitive: false }],
@@ -354,7 +362,7 @@ describe('validate: "wildcards" option (implicit contains matching)', () => {
   });
 
   it('applies to a bare term against "_all" too, since bare terms are ":" as well', () => {
-    const attributesWithAllWildcards: AttributeMap = { _all: { type: 'string', fields: ['name', 'description'], wildcards: true } };
+    const attributesWithAllWildcards: AttributeMap = { _all: { type: 'string', fields: ['name', 'description'], autoWildcards: true } };
 
     expect(validate({ expression: parse('Name'), attributes: attributesWithAllWildcards })).toMatchObject({
       fields: [
@@ -365,17 +373,17 @@ describe('validate: "wildcards" option (implicit contains matching)', () => {
   });
 });
 
-describe('validate: "leftWildcard"/"rightWildcard" options (one-sided auto-wildcard)', () => {
-  it('"leftWildcard" prefixes the value with "*" only — an ends-with match', () => {
+describe('validate: "autoLeftWildcard"/"autoRightWildcard" options (one-sided auto-wildcard)', () => {
+  it('"autoLeftWildcard" prefixes the value with "*" only — an ends-with match', () => {
     expect(validateQuery('nameEndsWith:Name')).toMatchObject({ fields: [{ operator: 'LIKE', value: '%Name' }] });
   });
 
-  it('"rightWildcard" appends "*" to the value only — a starts-with match', () => {
+  it('"autoRightWildcard" appends "*" to the value only — a starts-with match', () => {
     expect(validateQuery('nameStartsWith:Name')).toMatchObject({ fields: [{ operator: 'LIKE', value: 'Name%' }] });
   });
 
-  it('"wildcards: true" is equivalent to both "leftWildcard" and "rightWildcard" together', () => {
-    const attributesWithBoth: AttributeMap = { nameBoth: { type: 'string', leftWildcard: true, rightWildcard: true } };
+  it('"autoWildcards: true" is equivalent to both "autoLeftWildcard" and "autoRightWildcard" together', () => {
+    const attributesWithBoth: AttributeMap = { nameBoth: { type: 'string', autoLeftWildcard: true, autoRightWildcard: true } };
 
     expect(validate({ expression: parse('nameBoth:Name'), attributes: attributesWithBoth })).toMatchObject({
       fields: [{ operator: 'LIKE', value: '%Name%' }],
@@ -390,6 +398,39 @@ describe('validate: "leftWildcard"/"rightWildcard" options (one-sided auto-wildc
   it('an explicit "=" still requires an exact match — no implicit wrapping', () => {
     expect(validateQuery('nameEndsWith:=Name')).toMatchObject({ fields: [{ operator: '=', value: 'Name' }] });
     expect(validateQuery('nameStartsWith:=Name')).toMatchObject({ fields: [{ operator: '=', value: 'Name' }] });
+  });
+});
+
+describe('validate: "allowWildcards"/"allowLeftWildcard"/"allowRightWildcard" options', () => {
+  it('defaults to allowing an explicit "*" the user types', () => {
+    expect(validateQuery('name:Name*')).toMatchObject({ fields: [{ operator: 'LIKE', value: 'Name%' }] });
+  });
+
+  it('"allowWildcards: false" silently strips a user-typed "*" on either side', () => {
+    expect(validateQuery('nameNoWildcards:Name*')).toMatchObject({ fields: [{ operator: 'LIKE', value: 'Name' }] });
+    expect(validateQuery('nameNoWildcards:*Name')).toMatchObject({ fields: [{ operator: 'LIKE', value: 'Name' }] });
+    expect(validateQuery('nameNoWildcards:*Name*')).toMatchObject({ fields: [{ operator: 'LIKE', value: 'Name' }] });
+  });
+
+  it('a stripped user-typed "*" falls back to "autoWildcards" as if it had never been typed', () => {
+    expect(validateQuery('nameNoWildcardsButAuto:Name*')).toMatchObject({ fields: [{ operator: 'LIKE', value: '%Name%' }] });
+  });
+
+  it('"allowLeftWildcard: false" strips only a leading "*", leaving a trailing one intact', () => {
+    expect(validateQuery('nameNoLeftWildcard:*Name')).toMatchObject({ fields: [{ operator: 'LIKE', value: 'Name' }] });
+    expect(validateQuery('nameNoLeftWildcard:Name*')).toMatchObject({ fields: [{ operator: 'LIKE', value: 'Name%' }] });
+  });
+
+  it('"allowRightWildcard: false" strips only a trailing "*", leaving a leading one intact', () => {
+    expect(validateQuery('nameNoRightWildcard:Name*')).toMatchObject({ fields: [{ operator: 'LIKE', value: 'Name' }] });
+    expect(validateQuery('nameNoRightWildcard:*Name')).toMatchObject({ fields: [{ operator: 'LIKE', value: '%Name' }] });
+  });
+
+  it('still rejects a real "*" in the middle of the value, regardless of the allow flags', () => {
+    const [error] = tryCatch(() => validateQuery('nameNoWildcards:Na*me'));
+
+    expect(error).toBeInstanceOf(SearchCopError);
+    expect((error as SearchCopError).code).toBe('INVALID_WILDCARD');
   });
 });
 

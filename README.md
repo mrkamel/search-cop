@@ -86,9 +86,11 @@ map to translate the query-facing value into a different underlying value, e.g.
 [Null checks](#null-checks).
 
 `string` attributes accept an optional `caseSensitive: boolean | 'lower' | 'upper'` (default
-`true`) — see [Case sensitivity](#case-sensitivity) — and optional `wildcards`/
-`leftWildcard`/`rightWildcard: boolean` (all default `false`) — see
-[Implicit wildcards](#implicit-wildcards).
+`true`) — see [Case sensitivity](#case-sensitivity) — and optional `autoWildcards`/
+`autoLeftWildcard`/`autoRightWildcard: boolean` (all default `false`) — see
+[Implicit wildcards](#implicit-wildcards) — plus optional `allowWildcards`/
+`allowLeftWildcard`/`allowRightWildcard: boolean` (all default `true`) — see
+[Restricting user wildcards](#restricting-user-wildcards).
 
 `uuid` values are validated against RFC 9562 (version 1-8 and variant nibbles, plus the nil
 and max UUIDs) using the [`uuid`](https://www.npmjs.com/package/uuid) package, and are
@@ -117,7 +119,7 @@ createdAt:>=2026-01-01
 
 For most attribute types, `status:online` and `status:=online` compile identically. For a
 `string` attribute they don't: the bare `:` form always compiles to a `LIKE` predicate (so
-it can support wildcard syntax — see [Wildcards](#wildcards)) and enables the `wildcards`
+it can support wildcard syntax — see [Wildcards](#wildcards)) and enables the `autoWildcards`
 option (see [Implicit wildcards](#implicit-wildcards)); an explicit `=` always compiles to
 a plain `=` comparison and opts out of both.
 
@@ -230,12 +232,12 @@ collation) — see [Case sensitivity](#case-sensitivity) for a portable, explici
 
 ### Implicit wildcards
 
-Set `wildcards: true` on a `string` attribute to make the bare `:` shorthand a contains
+Set `autoWildcards: true` on a `string` attribute to make the bare `:` shorthand a contains
 match by default, without writing `*` yourself:
 
 ```ts
 attributes: {
-  name: { type: 'string', wildcards: true },
+  name: { type: 'string', autoWildcards: true },
 }
 ```
 
@@ -245,13 +247,13 @@ name:pet*                                   // explicit "*" is left exactly as w
 name:=pet                                   // explicit "=" always stays an exact match
 ```
 
-`wildcards: true` is shorthand for setting both `leftWildcard` and `rightWildcard`, which
-you can also set independently for a one-sided match:
+`autoWildcards: true` is shorthand for setting both `autoLeftWildcard` and
+`autoRightWildcard`, which you can also set independently for a one-sided match:
 
 ```ts
 attributes: {
-  endsWithName: { type: 'string', leftWildcard: true },     // endsWithName:pet   -> *pet  (ends with)
-  startsWithName: { type: 'string', rightWildcard: true },  // startsWithName:pet -> pet*  (starts with)
+  endsWithName: { type: 'string', autoLeftWildcard: true },     // endsWithName:pet   -> *pet  (ends with)
+  startsWithName: { type: 'string', autoRightWildcard: true },  // startsWithName:pet -> pet*  (starts with)
 }
 ```
 
@@ -259,6 +261,33 @@ Precedence, in order: an explicit `*` anywhere in the value is always respected 
 double-wrapping); otherwise an explicit `=` is always an exact match; only a bare `:` with
 neither falls back to the implicit wrap. This also applies to a bare term against `_all`
 (see [Default field](#default-field)), since bare terms are `:` too.
+
+### Restricting user wildcards
+
+`autoWildcards`/`autoLeftWildcard`/`autoRightWildcard` only control wildcards search-cop
+adds automatically — they don't stop a user from typing `*` themselves; that's always
+allowed by default, on both sides, regardless of the `auto*` settings. Set
+`allowWildcards: false` on a `string` attribute to silently strip a user-typed `*`, on
+either side, as if it had never been typed — falling back to whatever `auto*` behavior is
+configured, if any:
+
+```ts
+attributes: {
+  name: { type: 'string', allowWildcards: false },
+  contains: { type: 'string', allowWildcards: false, autoWildcards: true },
+}
+```
+
+```text
+name:pet*                                   // stripped -> exact match "pet"
+contains:pet*                               // stripped, then auto-wrapped -> contains "pet"
+```
+
+`allowWildcards: false` is shorthand for `allowLeftWildcard: false` and
+`allowRightWildcard: false` together; set either independently to strip a wildcard on just
+one side while leaving the other honored as typed. A `*` anywhere other than the start/end
+of the value still always throws `INVALID_WILDCARD` (see [Wildcards](#wildcards)) —
+these options only affect the start/end positions.
 
 ### Case sensitivity
 
@@ -399,7 +428,7 @@ CREATE INDEX idx_name_trgm ON products USING gin (name gin_trgm_ops);
 
 ```ts
 attributes: {
-  name: { type: 'string', wildcards: true },
+  name: { type: 'string', autoWildcards: true },
 }
 ```
 
@@ -421,7 +450,7 @@ on, exactly. Two ways that expression can drift out from under an index without 
 
   ```ts
   attributes: {
-    search: { type: 'string', wildcards: true, fields: ["name || ' ' || description"] },
+    search: { type: 'string', autoWildcards: true, fields: ["name || ' ' || description"] },
   }
   ```
 
