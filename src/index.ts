@@ -32,7 +32,7 @@ export function searchCondition(options: SearchConditionOptions): Brackets {
   return compileCondition(validated);
 }
 
-export { SearchCopError } from './errors/errors.js';
+export { SearchCopError, isSearchCopError } from './errors/errors.js';
 export type { SearchCopErrorCode } from './errors/errors.js';
 
 export type {
