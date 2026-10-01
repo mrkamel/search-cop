@@ -5,6 +5,26 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0]
+
+### Changed
+
+- `SearchCopError.name` is now a `readonly` class field typed as the literal `'SearchCopError'`,
+  instead of being assigned in the constructor. The runtime value is unchanged; it is now part
+  of the public type and can no longer be reassigned on an instance.
+
+## [0.4.0]
+
+### Added
+
+- `isSearchCopError(error: unknown): error is SearchCopError` type guard, exported from the
+  package root. See [Errors](README.md#errors).
+- `SearchCopError` is now resolved through a version-keyed global singleton
+  (`Symbol.for('search-cop@<version>:SearchCopError')`), so `instanceof` and the guard still
+  hold when several copies of the same package version end up in one process (duplicate
+  installs, mixed ESM/CJS resolution). `SearchCopError` stays usable both as a constructor
+  and as a type.
+
 ## [0.3.0]
 
 ### Added
