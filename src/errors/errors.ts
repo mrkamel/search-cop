@@ -23,4 +23,3 @@ class SearchCopErrorClass extends Error {
 
 export const SearchCopError = singleton('SearchCopError', () => SearchCopErrorClass);
 export type SearchCopError = SearchCopErrorClass;
-export const isSearchCopError = (error: unknown): error is SearchCopError => error instanceof SearchCopError;
