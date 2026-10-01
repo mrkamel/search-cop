@@ -9,12 +9,13 @@ export type SearchCopErrorCode =
   ;
 
 class SearchCopErrorClass extends Error {
+  override readonly name = 'SearchCopError';
+
   readonly code: SearchCopErrorCode;
   readonly position?: number;
 
   constructor(code: SearchCopErrorCode, message: string, position?: number) {
     super(message);
-    this.name = 'SearchCopError';
     this.code = code;
     this.position = position;
   }
