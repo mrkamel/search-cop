@@ -1,3 +1,5 @@
+import { singleton } from '../utils/singleton.js';
+
 export type SearchCopErrorCode =
   | 'INVALID_SYNTAX'
   | 'UNKNOWN_ATTRIBUTE'
@@ -6,7 +8,7 @@ export type SearchCopErrorCode =
   | 'CIRCULAR_TAG_REFERENCE'
   ;
 
-export class SearchCopError extends Error {
+class SearchCopErrorClass extends Error {
   readonly code: SearchCopErrorCode;
   readonly position?: number;
 
@@ -17,3 +19,7 @@ export class SearchCopError extends Error {
     this.position = position;
   }
 }
+
+export const SearchCopError = singleton('SearchCopError', () => SearchCopErrorClass);
+export type SearchCopError = SearchCopErrorClass;
+export const isSearchCopError = (error: unknown): error is SearchCopError => error instanceof SearchCopError;
