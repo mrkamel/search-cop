@@ -750,6 +750,30 @@ Invalid queries throw a `SearchCopError` with a `code`:
 - `INVALID_WILDCARD` — a bare `*` appears somewhere other than the start/end of a bare-colon `string` value (e.g. `name:Pet*Other`; see [Wildcards](#wildcards))
 - `CIRCULAR_TAG_REFERENCE` — a `tag` attribute's `attribute` points at itself (see [`type: 'tag'`](#type-tag--keyvalue-syntax-against-a-literal-fulltext-attribute))
 
+Catch them with `instanceof`:
+
+```ts
+import { SearchCopError } from 'search-cop';
+
+try {
+  search({ query, attributes, queryBuilder });
+} catch (error) {
+  if (error instanceof SearchCopError) {
+    // error.code, error.message, error.position
+  }
+
+  throw error;
+}
+```
+
+`instanceof` is safe even when more than one copy of search-cop is loaded in the same
+process — duplicate installs, or a bundler emitting its own copy alongside the one in
+`node_modules`. The class is resolved through a version-keyed global singleton
+(`Symbol.for('search-cop@<version>:SearchCopError')`), so every copy of the same version
+hands out one and the same class, and an error thrown by one copy is `instanceof` the
+`SearchCopError` imported from another. No type guard needed. Copies of *different*
+versions are deliberately distinct classes, since their `code` sets may differ.
+
 Note there's no error for a value that doesn't fit its type (an invalid uuid, an unknown
 enum value, ...) — see [Unparseable values never error](#unparseable-values-never-error).
 

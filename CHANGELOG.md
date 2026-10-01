@@ -5,6 +5,15 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0]
+
+### Removed
+
+- `isSearchCopError` type guard. Use `error instanceof SearchCopError` instead — it is safe
+  even with several copies of the package loaded in one process, since `SearchCopError` is
+  resolved through a version-keyed global singleton (added in 0.4.0), so every copy of the
+  same version shares one class. See [Errors](README.md#errors).
+
 ## [0.5.0]
 
 ### Changed
